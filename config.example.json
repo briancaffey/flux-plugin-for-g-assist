@@ -1,0 +1,10 @@
+{
+    "GALLERY_DIRECTORY": "D:\\NVIDIA",
+    "NVIDIA_API_KEY": "nvapi-abc123",
+    "FLUX_NIM_URL": "http://localhost:8000",
+    "NGC_API_KEY": "abc123",
+    "HF_TOKEN": "hf_abc123",
+    "LOCAL_NIM_CACHE": "~/.cache/nim",
+    "INVOKEAI_URL": "http://localhost:9090",
+    "BOARD_ID": "optional-board-id"
+}

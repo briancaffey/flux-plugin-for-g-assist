@@ -1,0 +1,127 @@
+{
+  "manifestVersion": 1,
+  "executable": "./g-assist-plugin-flux.exe",
+  "persistent": true,
+  "functions": [
+    {
+      "name": "flux_nim_ready_check",
+      "description": "Test health endpoints on localhost:8000",
+      "tags": [
+        "nim",
+        "ready",
+        "health",
+        "endpoints"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "check_nim_status",
+      "description": "Check the status of the flux NIM server",
+      "tags": [
+        "nim",
+        "status",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "stop_nim",
+      "description": "Stop the flux NIM server",
+      "tags": [
+        "nim",
+        "stop",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "start_nim",
+      "description": "Start the flux NIM server",
+      "tags": [
+        "nim",
+        "start",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "generate_image",
+      "description": "Generate an image using the Flux NIM API",
+      "tags": [
+        "image",
+        "generate",
+        "flux",
+        "ai"
+      ],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Text prompt describing the image to generate"
+        }
+      }
+    },
+    {
+      "name": "generate_image_using_kontext",
+      "description": "Upload the most recent screenshot to InvokeAI and run Flux Kontext workflow",
+      "tags": [
+        "image",
+        "upload",
+        "screenshot",
+        "invokeai",
+        "kontext",
+        "flux"
+      ],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Text prompt for Flux Kontext generation (optional)"
+        }
+      }
+    },
+    {
+      "name": "invokeai_status",
+      "description": "Check the status of the InvokeAI service and display version information",
+      "tags": [
+        "invokeai",
+        "status",
+        "version",
+        "health"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "pause_invokeai_processor",
+      "description": "Pause the InvokeAI processor queue",
+      "tags": [
+        "invokeai",
+        "processor",
+        "pause",
+        "queue"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "resume_invokeai_processor",
+      "description": "Resume the InvokeAI processor queue",
+      "tags": [
+        "invokeai",
+        "processor",
+        "resume",
+        "queue"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "invokeai_empty_model_cache",
+      "description": "Empty the InvokeAI model cache to free up VRAM",
+      "tags": [
+        "invokeai",
+        "cache",
+        "vram",
+        "memory",
+        "cleanup"
+      ],
+      "properties": {}
+    }
+  ]
+}

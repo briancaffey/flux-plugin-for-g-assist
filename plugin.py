@@ -1,0 +1,1446 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
+import logging
+import os
+import urllib.request
+import urllib.error
+import subprocess
+import threading
+import requests
+import mimetypes
+from ctypes import byref, windll, wintypes
+
+# Data Types
+type Response = dict[str, any]
+
+LOG_FILE = os.path.join(os.environ.get("USERPROFILE", "."), 'flux_plugin.log')
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Global configuration variables
+CONFIG_FILE = os.path.join(f'{os.environ.get("PROGRAMDATA", ".")}{r'\NVIDIA Corporation\nvtopps\rise\plugins\flux'}', 'config.json')
+GALLERY_DIRECTORY = None
+NVIDIA_API_KEY = None
+NGC_API_KEY = None
+HF_TOKEN = None
+LOCAL_NIM_CACHE = None
+OUTPUT_DIRECTORY = os.path.join(os.environ.get("USERPROFILE", "."), "flux_output")
+BUILD_NVIDIA_COM_FLUX_HOSTED_NIM = "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
+FLUX_NIM_URL = None
+INVOKEAI_URL = "http://localhost:9090"
+BOARD_ID = None
+
+def set_desktop_background(image_path: str) -> bool:
+    """
+    Sets the specified image as the desktop background.
+    
+    Args:
+        image_path (str): Full path to the image file
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Check if the image file exists
+        if not os.path.exists(image_path):
+            logging.error(f"Image file does not exist: {image_path}")
+            return False
+            
+        # Use Windows API to set the desktop background
+        SPI_SETDESKWALLPAPER = 0x0014
+        SPIF_UPDATEINIFILE = 0x01
+        SPIF_SENDCHANGE = 0x02
+        
+        # Convert the path to absolute path
+        abs_path = os.path.abspath(image_path)
+        
+        # Set the desktop background
+        result = windll.user32.SystemParametersInfoW(
+            SPI_SETDESKWALLPAPER, 
+            0, 
+            abs_path, 
+            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+        )
+        
+        if result:
+            logging.info(f"Successfully set desktop background to: {abs_path}")
+            return True
+        else:
+            logging.error(f"Failed to set desktop background to: {abs_path}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error setting desktop background: {e}")
+        return False
+
+def load_config():
+    ''' Load configuration from config.json file '''
+    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_NIM_URL, INVOKEAI_URL, BOARD_ID
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+            GALLERY_DIRECTORY = config.get('GALLERY_DIRECTORY', None)
+            NVIDIA_API_KEY = config.get('NVIDIA_API_KEY', None)
+            NGC_API_KEY = config.get('NGC_API_KEY', None)
+            HF_TOKEN = config.get('HF_TOKEN', None)
+            LOCAL_NIM_CACHE = config.get('LOCAL_NIM_CACHE', None)
+            OUTPUT_DIRECTORY = config.get('OUTPUT_DIRECTORY', OUTPUT_DIRECTORY)
+            FLUX_NIM_URL = config.get('FLUX_NIM_URL', BUILD_NVIDIA_COM_FLUX_HOSTED_NIM)
+            INVOKEAI_URL = config.get('INVOKEAI_URL', "http://localhost:9090")
+            BOARD_ID = config.get('BOARD_ID', None)
+            logging.info('Configuration loaded successfully')
+    except FileNotFoundError:
+        logging.warning(f'Config file not found: {CONFIG_FILE}')
+    except json.JSONDecodeError as e:
+        logging.error(f'Error parsing config file: {e}')
+    except Exception as e:
+        logging.error(f'Error loading config: {e}')
+
+
+def main():
+    ''' Main entry point.
+
+    Sits in a loop listening to a pipe, waiting for commands to be issued. After
+    receiving the command, it is processed and the result returned. The loop
+    continues until the "shutdown" command is issued.
+
+    Returns:
+        0 if no errors occurred during execution; non-zero if an error occurred
+    '''
+    # Load configuration on startup
+    load_config()
+
+    TOOL_CALLS_PROPERTY = 'tool_calls'
+    CONTEXT_PROPERTY = 'messages'
+    SYSTEM_INFO_PROPERTY = 'system_info'  # Added for game information
+    FUNCTION_PROPERTY = 'func'
+    INITIALIZE_COMMAND = 'initialize'
+    SHUTDOWN_COMMAND = 'shutdown'
+
+
+    ERROR_MESSAGE = 'Plugin Error!'
+
+    # Generate command handler mapping
+    commands = {
+        'initialize': execute_initialize_command,
+        'shutdown': execute_shutdown_command,
+        'flux_nim_ready_check': flux_nim_ready_check,
+        'check_nim_status': check_nim_status,
+        'stop_nim': stop_nim,
+        'start_nim': start_nim,
+        'generate_image': generate_image,
+        'generate_image_using_kontext': generate_image_using_kontext,
+        'invokeai_status': invokeai_status,
+        'pause_invokeai_processor': pause_invokeai_processor,
+        'resume_invokeai_processor': resume_invokeai_processor,
+        'invokeai_empty_model_cache': invokeai_empty_model_cache
+    }
+    cmd = ''
+
+    logging.info('Plugin started')
+    while cmd != SHUTDOWN_COMMAND:
+        response = None
+        input = read_command()
+        if input is None:
+            logging.error('Error reading command')
+            continue
+
+        logging.info(f'Received input: {input}')
+
+        if TOOL_CALLS_PROPERTY in input:
+            tool_calls = input[TOOL_CALLS_PROPERTY]
+            for tool_call in tool_calls:
+                if FUNCTION_PROPERTY in tool_call:
+                    cmd = tool_call[FUNCTION_PROPERTY]
+                    logging.info(f'Processing command: {cmd}')
+                    if cmd in commands:
+                        if(cmd == INITIALIZE_COMMAND or cmd == SHUTDOWN_COMMAND):
+                            response = commands[cmd]()
+                        else:
+                            response = execute_initialize_command()
+                            response = commands[cmd](
+                                tool_call.get('params', None),
+                                input[CONTEXT_PROPERTY] if CONTEXT_PROPERTY in input else None,
+                                input[SYSTEM_INFO_PROPERTY] if SYSTEM_INFO_PROPERTY in input else None  # Pass system_info directly
+                            )
+                    else:
+                        logging.warning(f'Unknown command: {cmd}')
+                        response = generate_failure_response(f'{ERROR_MESSAGE} Unknown command: {cmd}')
+                else:
+                    logging.warning('Malformed input: missing function property')
+                    response = generate_failure_response(f'{ERROR_MESSAGE} Malformed input.')
+        else:
+            logging.warning('Malformed input: missing tool_calls property')
+            response = generate_failure_response(f'{ERROR_MESSAGE} Malformed input.')
+
+        logging.info(f'Sending response: {response}')
+        write_response(response)
+
+        if cmd == SHUTDOWN_COMMAND:
+            logging.info('Shutdown command received, terminating plugin')
+            break
+    
+    logging.info('G-Assist Plugin stopped.')
+    return 0
+
+
+def read_command() -> dict | None:
+    ''' Reads a command from the communication pipe.
+
+    Returns:
+        Command details if the input was proper JSON; `None` otherwise
+    '''
+    try:
+        STD_INPUT_HANDLE = -10
+        pipe = windll.kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        chunks = []
+
+        while True:
+            BUFFER_SIZE = 4096
+            message_bytes = wintypes.DWORD()
+            buffer = bytes(BUFFER_SIZE)
+            success = windll.kernel32.ReadFile(
+                pipe,
+                buffer,
+                BUFFER_SIZE,
+                byref(message_bytes),
+                None
+            )
+
+            if not success:
+                logging.error('Error reading from command pipe')
+                return None
+
+            # Add the chunk we read
+            chunk = buffer.decode('utf-8')[:message_bytes.value]
+            chunks.append(chunk)
+
+            # If we read less than the buffer size, we're done
+            if message_bytes.value < BUFFER_SIZE:
+                break
+
+        retval = buffer.decode('utf-8')[:message_bytes.value]
+        return json.loads(retval)
+
+    except json.JSONDecodeError:
+        logging.error('Failed to decode JSON input')
+        return None
+    except Exception as e:
+        logging.error(f'Unexpected error in read_command: {str(e)}')
+        return None
+
+
+def write_response(response:Response) -> None:
+    ''' Writes a response to the communication pipe.
+
+    Args:
+        response: Function response
+    '''
+    try:
+        STD_OUTPUT_HANDLE = -11
+        pipe = windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+
+        json_message = json.dumps(response) + "<<END>>"
+        message_bytes = json_message.encode('utf-8')
+        message_len = len(message_bytes)
+
+        bytes_written = wintypes.DWORD()
+        windll.kernel32.WriteFile(
+            pipe,
+            message_bytes,
+            message_len,
+            bytes_written,
+            None
+        )
+
+    except Exception as e:
+        logging.error(f'Failed to write response: {str(e)}')
+        pass
+
+
+def generate_failure_response(message:str=None) -> Response:
+    ''' Generates a response indicating failure.
+
+    Parameters:
+        message: String to be returned in the response (optional)
+
+    Returns:
+        A failure response with the attached message
+    '''
+    response = { 'success': False }
+    if message:
+        response['message'] = message
+    return response
+
+
+def generate_success_response(message:str=None) -> Response:
+    ''' Generates a response indicating success.
+
+    Parameters:
+        message: String to be returned in the response (optional)
+
+    Returns:
+        A success response with the attached massage
+    '''
+    response = { 'success': True }
+    if message:
+        response['message'] = message
+    return response
+
+
+def generate_progress_response(message:str=None, status:str="processing") -> Response:
+    ''' Generates a progress response for partial updates.
+
+    Parameters:
+        message: Progress message to display
+        status: Status indicator (processing, success, error)
+
+    Returns:
+        A progress response with the attached message and status
+    '''
+    response = { 
+        'success': True,
+        'message': message,
+        'status': status
+    }
+    return response
+
+
+def execute_initialize_command() -> dict:
+    ''' Command handler for `initialize` function
+
+    This handler is responseible for initializing the plugin.
+
+    Args:
+        params: Function parameters
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info('Initializing plugin')
+    # initialization function body
+    return generate_success_response('initialize success.')
+
+
+def execute_shutdown_command() -> dict:
+    ''' Command handler for `shutdown` function
+
+    This handler is responsible for releasing any resources the plugin may have
+    acquired during its operation (memory, access to hardware, etc.).
+
+    Args:
+        params: Function parameters
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info('Shutting down plugin')
+    # shutdown function body
+    return generate_success_response('shutdown success.')
+
+
+def flux_nim_ready_check(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `flux_nim_ready_check` function
+
+    Tests health endpoints using the configured FLUX_NIM_URL.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info(f'Executing flux_nim_ready_check with params: {params}')
+
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        # Get the base URL from configuration
+        global FLUX_NIM_URL
+        if not FLUX_NIM_URL:
+            return generate_failure_response('FLUX_NIM_URL not configured. Please set FLUX_NIM_URL in config.json')
+        
+        # Check if using NVIDIA hosted service
+        if FLUX_NIM_URL.startswith("https://ai.api.nvidia.com"):
+            logging.info('Using NVIDIA hosted Flux service - no health check needed')
+            return generate_success_response('Using NVIDIA hosted Flux service')
+        
+        # Extract base URL for health endpoints (remove /v1/infer if present for local servers)
+        base_url = FLUX_NIM_URL
+        
+        # Step 1: Test live endpoint
+        logging.info('Testing /v1/health/live endpoint...')
+        live_url = f'{base_url}/v1/health/live'
+
+        try:
+            with urllib.request.urlopen(live_url, timeout=5) as response:
+                live_status = response.getcode()
+                logging.info(f'Live endpoint status: {live_status}')
+                if live_status != 200:
+                    return generate_failure_response(f'Live endpoint returned status {live_status}')
+        except urllib.error.URLError as e:
+            logging.error(f'Error accessing live endpoint: {e}')
+            return generate_failure_response(f'Live endpoint error: {e}')
+        except Exception as e:
+            logging.error(f'Unexpected error with live endpoint: {e}')
+            return generate_failure_response(f'Live endpoint error: {e}')
+
+        # Step 2: Test ready endpoint
+        logging.info('Testing /v1/health/ready endpoint...')
+        ready_url = f'{base_url}/v1/health/ready'
+
+        try:
+            with urllib.request.urlopen(ready_url, timeout=5) as response:
+                ready_status = response.getcode()
+                logging.info(f'Ready endpoint status: {ready_status}')
+                if ready_status != 200:
+                    return generate_failure_response(f'Ready endpoint returned status {ready_status}')
+        except urllib.error.URLError as e:
+            logging.error(f'Error accessing ready endpoint: {e}')
+            return generate_failure_response(f'Ready endpoint error: {e}')
+        except Exception as e:
+            logging.error(f'Unexpected error with ready endpoint: {e}')
+            return generate_failure_response(f'Ready endpoint error: {e}')
+
+        # Step 3: Success response
+        logging.info('Both health endpoints are working!')
+        final_response = generate_success_response('Service is live and ready!')
+        logging.info(f'Final response: {final_response}')
+        return final_response
+
+    except Exception as e:
+        logging.error(f'Error in flux_nim_ready_check: {str(e)}')
+        return generate_failure_response(f'Error in flux_nim_ready_check: {str(e)}')
+
+
+def check_nim_status(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `check_nim_status` function
+
+    Checks the status of the flux NIM server using WSL and podman.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info(f'Executing check_nim_status with params: {params}')
+
+    try:
+        # Check if nim-server container is running using WSL and podman
+        logging.info('Checking if nim-server container is running...')
+        check_cmd = ['wsl', '-d', 'NVIDIA-Workbench', 'podman', 'ps', '--filter', 'name=nim-server', '--format', '{{.Names}}']
+
+        try:
+            result = subprocess.run(check_cmd, check=True, capture_output=True, text=True)
+            container_names = result.stdout.strip()
+            logging.info(f'Nim-server container names: {container_names}')
+
+            if container_names:
+                return generate_success_response(f'NIM server is running. Container: {container_names}')
+            else:
+                return generate_failure_response('NIM server is not running.')
+
+        except subprocess.CalledProcessError as e:
+            logging.error(f'Error checking NIM server status: {e}')
+            return generate_failure_response(f'Error checking NIM server status: {e}')
+        except FileNotFoundError:
+            logging.error('WSL or podman command not found')
+            return generate_failure_response('WSL or podman command not found')
+        except Exception as e:
+            logging.error(f'Unexpected error checking NIM server status: {e}')
+            return generate_failure_response(f'Error checking NIM server status: {e}')
+
+    except Exception as e:
+        logging.error(f'Error in check_nim_status: {str(e)}')
+        return generate_failure_response(f'Error in check_nim_status: {str(e)}')
+
+
+def stop_nim(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `stop_nim` function
+
+    Stops the flux NIM server using WSL and podman.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info(f'Executing stop_nim with params: {params}')
+
+    try:
+        # Stop the nim-server container using WSL and podman
+        logging.info('Stopping nim-server container...')
+        stop_cmd = ['wsl', '-d', 'NVIDIA-Workbench', 'podman', 'kill', 'nim-server']
+
+        try:
+            result = subprocess.run(stop_cmd, check=True, capture_output=True, text=True)
+            logging.info(f'Nim-server stop result: {result.stdout.strip()}')
+
+            return generate_success_response('NIM server stopped successfully.')
+
+        except subprocess.CalledProcessError as e:
+            logging.error(f'Error stopping NIM server: {e}')
+            return generate_failure_response(f'Error stopping NIM server: {e}')
+        except FileNotFoundError:
+            logging.error('WSL or podman command not found')
+            return generate_failure_response('WSL or podman command not found')
+        except Exception as e:
+            logging.error(f'Unexpected error stopping NIM server: {e}')
+            return generate_failure_response(f'Error stopping NIM server: {e}')
+        
+    except Exception as e:
+        logging.error(f'Error in stop_nim: {str(e)}')
+        return generate_failure_response(f'Error in stop_nim: {str(e)}')
+
+
+def start_nim(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `start_nim` function
+
+    Starts the flux NIM server using WSL and podman with configuration from config.json.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info(f'Executing start_nim with params: {params}')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        # Check configuration requirements
+        global NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE
+        if not NGC_API_KEY or NGC_API_KEY == "YOUR_NGC_API_KEY_HERE":
+            return generate_failure_response('NGC API key not configured. Please set NGC_API_KEY in config.json')
+        
+        if not HF_TOKEN or HF_TOKEN == "YOUR_HF_TOKEN_HERE":
+            return generate_failure_response('HF Token not configured. Please set HF_TOKEN in config.json')
+        
+        if not LOCAL_NIM_CACHE or LOCAL_NIM_CACHE == "/path/to/your/nim/cache":
+            return generate_failure_response('Local NIM cache path not configured. Please set LOCAL_NIM_CACHE in config.json')
+        
+        # Check if NIM server is already running
+        logging.info('Checking if Flux NIM server is already running...')
+        check_result = check_nim_status()
+        if check_result.get('success', False):
+            return generate_failure_response('Flux NIM server is already running.')
+        
+        # Build the podman command
+        logging.info('Starting Flux NIM server...')
+        podman_cmd = [
+            'wsl', '-d', 'NVIDIA-Workbench',
+            'podman', 'run', '-d', '--rm', '--name=nim-server',
+            '--device', 'nvidia.com/gpu=all',
+            '-e', f'NGC_API_KEY={NGC_API_KEY}',
+            '-e', f'HF_TOKEN={HF_TOKEN}',
+            '-p', '8000:8000',
+            '-v', f'{LOCAL_NIM_CACHE}:/opt/nim/.cache/',
+            'nvcr.io/nim/black-forest-labs/flux.1-dev:1.0.0'
+        ]
+        
+        try:
+            # Start the container in the background
+            result = subprocess.run(podman_cmd, check=True, capture_output=True, text=True)
+            logging.info(f'NIM server start result: {result.stdout.strip()}')
+            
+            return generate_success_response('NIM server started successfully.')
+                
+        except subprocess.CalledProcessError as e:
+            logging.error(f'Error starting NIM server: {e}')
+            return generate_failure_response(f'Error starting NIM server: {e}')
+        except FileNotFoundError:
+            logging.error('WSL or podman command not found')
+            return generate_failure_response('WSL or podman command not found')
+        except Exception as e:
+            logging.error(f'Unexpected error starting NIM server: {e}')
+            return generate_failure_response(f'Error starting NIM server: {e}')
+        
+    except Exception as e:
+        logging.error(f'Error in start_nim: {str(e)}')
+        return generate_failure_response(f'Error in start_nim: {str(e)}')
+
+
+def generate_image_worker(prompt: str, output_dir: str, flux_url: str, nvidia_api_key: str):
+    ''' Background worker function to generate image '''
+    try:
+        logging.info(f'Starting background image generation for prompt: {prompt}')
+        
+        payload = {
+            "height": 768,
+            "width": 1344,
+            "cfg_scale": 5,
+            "mode": "base",
+            "samples": 1,
+            "seed": 0, # random seed
+            "steps": 50,
+            "prompt": prompt
+        }
+        
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "Authorization": f"Bearer {nvidia_api_key}"
+        }
+        
+        logging.info(f'Sending request to Flux API: {flux_url}')
+        logging.info(f'Payload: {payload}')
+        
+        # Convert payload to JSON
+        json_payload = json.dumps(payload)
+
+        # For NVIDIA API endpoints, use the URL as-is (it already includes the full endpoint)
+        # For local NIM servers, append /v1/infer to the base URL
+        if flux_url.startswith("https://ai.api.nvidia.com"):
+            FLUX_INFER_URL = flux_url
+        else:
+            FLUX_INFER_URL = f"{flux_url}/v1/infer"
+        
+        # Create request
+        req = urllib.request.Request(FLUX_INFER_URL, data=json_payload.encode('utf-8'), headers=headers, method='POST')
+        
+        # Send request
+        with urllib.request.urlopen(req, timeout=300) as response:  # Increased timeout to 5 minutes
+            response_data = json.loads(response.read().decode('utf-8'))
+            logging.info(f'Flux API response received.')
+            
+            if 'artifacts' in response_data and len(response_data['artifacts']) > 0:
+                artifact = response_data['artifacts'][0]
+                image_data = artifact['base64']
+
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"flux_image_{timestamp}.png"
+                file_path = os.path.join(output_dir, filename)
+
+                # Save the image
+                import base64
+                image_bytes = base64.b64decode(image_data)
+                
+                with open(file_path, 'wb') as f:
+                    f.write(image_bytes)
+                
+                logging.info(f'Image saved successfully: {file_path}')
+                
+                # Set the image as desktop background
+                if set_desktop_background(file_path):
+                    logging.info(f'Successfully set {file_path} as desktop background')
+                else:
+                    logging.warning(f'Failed to set {file_path} as desktop background')
+            else:
+                logging.error('No artifacts found in response')
+                
+    except urllib.error.URLError as e:
+        logging.error(f'Error making request to Flux API: {e}')
+    except urllib.error.HTTPError as e:
+        logging.error(f'HTTP error from Flux API: {e}')
+    except json.JSONDecodeError as e:
+        logging.error(f'Error parsing API response: {e}')
+    except Exception as e:
+        logging.error(f'Unexpected error during image generation: {e}')
+
+
+def generate_image(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `generate_image` function
+
+    Generates an image using the Flux NIM API in a background thread.
+
+    Args:
+        params: Function parameters (can include 'prompt')
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info(f'Executing generate_image with params: {params}')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        # Check if NVIDIA API key is configured (only required for NVIDIA API endpoints)
+        global NVIDIA_API_KEY, FLUX_NIM_URL
+        if FLUX_NIM_URL.startswith("https://ai.api.nvidia.com"):
+            if not NVIDIA_API_KEY or NVIDIA_API_KEY == "YOUR_NVIDIA_API_KEY_HERE" or not NVIDIA_API_KEY.startswith("nvapi-"):
+                return generate_failure_response('NVIDIA API key not configured or invalid. Please set a valid NVIDIA_API_KEY (starting with "nvapi-") in config.json')
+        
+        # Get prompt from parameters (optional)
+        prompt = params.get('prompt', '') if params else ''
+        if not prompt:
+            prompt = "A beautiful landscape with mountains and a lake"
+            logging.info(f'No prompt provided, using default: {prompt}')
+        else:
+            logging.info(f'Using provided prompt: {prompt}')
+        
+        # Ensure output directory exists
+        global OUTPUT_DIRECTORY
+        os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+        logging.info(f'Output directory: {OUTPUT_DIRECTORY}')
+        
+        # Start image generation in background thread
+        thread = threading.Thread(
+            target=generate_image_worker,
+            args=(prompt, OUTPUT_DIRECTORY, FLUX_NIM_URL, NVIDIA_API_KEY),
+            daemon=True
+        )
+        thread.start()
+        
+        logging.info(f'Started background image generation thread for prompt: {prompt}')
+        return generate_success_response(f'Your image generation request is in progress! Prompt: "{prompt}"')
+        
+    except Exception as e:
+        logging.error(f'Error in generate_image: {str(e)}')
+        return generate_failure_response(f'Error in generate_image: {str(e)}')
+
+
+def find_most_recent_image(directory: str, extensions: set[str]):
+    """
+    Recursively search for the most recent image file in a directory.
+
+    Args:
+        directory (str): Root directory to search in.
+        extensions (set[str]): Set of allowed image file extensions (e.g., {'.png', '.jpg'}).
+
+    Returns:
+        Optional[str]: Path to the most recently modified image file, or None if not found.
+    """
+    from pathlib import Path
+    
+    dir_path = Path(directory)
+    if not dir_path.exists() or not dir_path.is_dir():
+        logging.warning(f"Directory does not exist or is not a directory: {directory}")
+        return None
+
+    latest_file = None
+    latest_mtime = 0
+
+    try:
+        for file_path in dir_path.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in extensions:
+                mtime = file_path.stat().st_mtime
+                if mtime > latest_mtime:
+                    latest_file = str(file_path)
+                    latest_mtime = mtime
+    except Exception as e:
+        logging.error(f"Error while scanning directory {directory}: {e}")
+        return None
+
+    return latest_file
+
+
+def upload_image_to_invoke(image_path: str, invokeai_url: str, board_id: str = None):
+    """
+    Uploads an image to InvokeAI and returns the image name.
+
+    Args:
+        image_path (str): Path to the image file
+        invokeai_url (str): Base URL for InvokeAI
+        board_id (str): ID of the board to upload to (optional)
+
+    Returns:
+        str: The image name returned by InvokeAI, or None if upload failed
+    """
+    upload_url = f"{invokeai_url}/api/v1/images/upload"
+    params = {
+        "image_category": "user",
+        "is_intermediate": "false",
+        "crop_visible": "false"
+    }
+    
+    # Add board_id to params if provided
+    if board_id:
+        params["board_id"] = board_id
+
+    try:
+        # Get the MIME type of the image
+        mime_type, _ = mimetypes.guess_type(image_path)
+        if mime_type is None:
+            mime_type = 'image/png'  # Default to PNG if guess fails
+
+        # Prepare the file for upload
+        with open(image_path, 'rb') as f:
+            files = {
+                'file': (os.path.basename(image_path), f, mime_type),
+                # 'resize_to': (None, '(1360,768)')
+            }
+
+            # Make the request
+            response = requests.post(
+                upload_url,
+                params=params,
+                files=files,
+                headers={'accept': 'application/json'}
+            )
+
+            response.raise_for_status()
+            result = response.json()
+            return result.get('image_name')
+
+    except Exception as e:
+        logging.error(f"Error uploading image to InvokeAI: {e}")
+        return None
+
+
+# This dictionary defines the workflow that will be sent to InvokeAI for doing Flux Kontext generation
+INVOKEAI_FLUX_KONTEXT_WORKFLOW = {
+  "queue_id": "default",
+  "enqueued": 0,
+  "requested": 0,
+  "batch": {
+    "data": [],
+    "graph": {
+        "id": "ec50dc0e-363b-4723-bf89-264cf52a4af1",
+        "nodes": {
+            "flux_model_loader:ywdpEhgSIn": {
+                "id": "flux_model_loader:ywdpEhgSIn",
+                "is_intermediate": True,
+                "use_cache": True,
+                "model": {
+                    "key" : "c5ba7675-db0c-4280-a426-0154b5de8c98",
+                    "hash": "blake3:8aadbed066021cc98686965fe9fc580083acbe027f600190f8d2436e6ac8b366",
+                    "name": "FLUX.1 Kontext dev (Quantized)",
+                    "base": "flux",
+                    "type": "main"
+                },
+                "t5_encoder_model": {
+                    "key" : "284404cd-baf2-42cc-bbb3-a430d8909df6",
+                    "hash": "blake3:12f3f5d4856e684c627c0b5c403ace83a8e8baaf0fa6518cd230b5ec1c519107",
+                    "name": "t5_base_encoder",
+                    "base": "any",
+                    "type": "t5_encoder"
+                },
+                "clip_embed_model": {
+                    "key" : "f4269feb-2e98-4174-9c22-74dca9140584",
+                    "hash": "blake3:17c19f0ef941c3b7609a9c94a659ca5364de0be364a91d4179f0e39ba17c3b70",
+                    "name": "clip-vit-large-patch14",
+                    "base": "any",
+                    "type": "clip_embed"
+                },
+                "vae_model": {
+                    "key" : "0f0ccb31-5bd9-4a29-b2a4-56168596f4d6",
+                    "hash": "blake3:ce21cb76364aa6e2421311cf4a4b5eb052a76c4f1cd207b50703d8978198a068",
+                    "name": "FLUX.1-schnell_ae",
+                    "base": "flux",
+                    "type": "vae"
+                },
+                "type": "flux_model_loader"
+            },
+            "positive_prompt:0oQdkhpu9K": {
+                "id": "positive_prompt:0oQdkhpu9K",
+                "is_intermediate": True,
+                "use_cache": True,
+                "value": "make it in the style of studio ghibli anime",
+                "type": "string"
+            },
+            "flux_text_encoder:o0tHGDGa69": {
+                "id": "flux_text_encoder:o0tHGDGa69",
+                "is_intermediate": True,
+                "use_cache": True,
+                "type": "flux_text_encoder"
+            },
+            "pos_cond_collect:ApPpdRqgK2": {
+                "id": "pos_cond_collect:ApPpdRqgK2",
+                "is_intermediate": True,
+                "use_cache": True,
+                "collection": [],
+                "type": "collect"
+            },
+            "seed:aVE0l2Zlf1": {
+                "id": "seed:aVE0l2Zlf1",
+                "is_intermediate": True,
+                "use_cache": True,
+                "value": 1234,
+                "type": "integer"
+            },
+            "flux_denoise:9SHZg1d4kC": {
+                "id": "flux_denoise:9SHZg1d4kC",
+                "is_intermediate": True,
+                "use_cache": True,
+                "denoising_start": 0,
+                "denoising_end": 1,
+                "add_noise": True,
+                "cfg_scale": 1,
+                "cfg_scale_start_step": 0,
+                "cfg_scale_end_step": -1,
+                "width": 1376,
+                "height": 784,
+                "num_steps": 50,
+                "guidance": 9,
+                "seed": 0,
+                "type": "flux_denoise"
+            },
+            "flux_vae_decode:Vr4fbsSEgU": {
+                "id": "flux_vae_decode:Vr4fbsSEgU",
+                "is_intermediate": True,
+                "use_cache": True,
+                "type": "flux_vae_decode"
+            },
+            "core_metadata:oCIejDlaQA": {
+                "id": "core_metadata:oCIejDlaQA",
+                "is_intermediate": True,
+                "use_cache": True,
+                "generation_mode": "flux_txt2img",
+                "width": 1360,
+                "height": 768,
+                "steps": 50,
+                "model": {
+                    "key" : "c5ba7675-db0c-4280-a426-0154b5de8c98",
+                    "hash": "blake3:8aadbed066021cc98686965fe9fc580083acbe027f600190f8d2436e6ac8b366",
+                    "name": "FLUX.1 Kontext dev (Quantized)",
+                    "base": "flux",
+                    "type": "main"
+                },
+                "vae": {
+                    "key" : "0f0ccb31-5bd9-4a29-b2a4-56168596f4d6",
+                    "hash": "blake3:ce21cb76364aa6e2421311cf4a4b5eb052a76c4f1cd207b50703d8978198a068",
+                    "name": "FLUX.1-schnell_ae",
+                    "base": "flux",
+                    "type": "vae"
+                },
+                "type": "core_metadata"
+            },
+            "flux_kontext:MsQ9ynwazR": {
+                "id": "flux_kontext:MsQ9ynwazR",
+                "is_intermediate": True,
+                "use_cache": True,
+                "image": {"image_name": "PLACEHOLDER.png"}, # this will be replaced with the actual image name
+                "type": "flux_kontext"
+            },
+            "canvas_output:FhpncF2ITc": {
+                "id": "canvas_output:FhpncF2ITc",
+                "is_intermediate": False,
+                "use_cache": False,
+                "width": 1360,
+                "height": 768,
+                "resample_mode": "bicubic",
+                "type": "img_resize"
+            }
+        },
+        "edges": [
+            {
+                "source"     : {"node_id": "flux_model_loader:ywdpEhgSIn", "field": "transformer"},
+                "destination": {"node_id": "flux_denoise:9SHZg1d4kC",      "field": "transformer"}
+            },
+            {
+                "source"     : {"node_id": "flux_model_loader:ywdpEhgSIn", "field": "vae"           },
+                "destination": {"node_id": "flux_denoise:9SHZg1d4kC",      "field": "controlnet_vae"}
+            },
+            {
+                "source"     : {"node_id": "flux_model_loader:ywdpEhgSIn", "field": "vae"},
+                "destination": {"node_id": "flux_vae_decode:Vr4fbsSEgU",   "field": "vae"}
+            },
+            {
+                "source"     : {"node_id": "flux_model_loader:ywdpEhgSIn", "field": "clip"},
+                "destination": {"node_id": "flux_text_encoder:o0tHGDGa69", "field": "clip"}
+            },
+            {
+                "source"     : {"node_id": "flux_model_loader:ywdpEhgSIn", "field": "t5_encoder"},
+                "destination": {"node_id": "flux_text_encoder:o0tHGDGa69", "field": "t5_encoder"}
+            },
+            {
+                "source"     : {"node_id": "flux_model_loader:ywdpEhgSIn", "field": "max_seq_len"   },
+                "destination": {"node_id": "flux_text_encoder:o0tHGDGa69", "field": "t5_max_seq_len"}
+            },
+            {
+                "source"     : {"node_id": "positive_prompt:0oQdkhpu9K",   "field": "value" },
+                "destination": {"node_id": "flux_text_encoder:o0tHGDGa69", "field": "prompt"}
+            },
+            {
+                "source"     : {"node_id": "flux_text_encoder:o0tHGDGa69", "field": "conditioning"},
+                "destination": {"node_id": "pos_cond_collect:ApPpdRqgK2",  "field": "item"        }
+            },
+            {
+                "source"     : {"node_id": "pos_cond_collect:ApPpdRqgK2", "field": "collection"                },
+                "destination": {"node_id": "flux_denoise:9SHZg1d4kC",     "field": "positive_text_conditioning"}
+            },
+            {
+                "source"     : {"node_id": "seed:aVE0l2Zlf1",         "field": "value"},
+                "destination": {"node_id": "flux_denoise:9SHZg1d4kC", "field": "seed" }
+            },
+            {
+                "source"     : {"node_id": "flux_denoise:9SHZg1d4kC",    "field": "latents"},
+                "destination": {"node_id": "flux_vae_decode:Vr4fbsSEgU", "field": "latents"}
+            },
+            {
+                "source"     : {"node_id": "seed:aVE0l2Zlf1",          "field": "value"},
+                "destination": {"node_id": "core_metadata:oCIejDlaQA", "field": "seed" }
+            },
+            {
+                "source"     : {"node_id": "positive_prompt:0oQdkhpu9K", "field": "value"          },
+                "destination": {"node_id": "core_metadata:oCIejDlaQA",   "field": "positive_prompt"}
+            },
+            {
+                "source"     : {"node_id": "flux_kontext:MsQ9ynwazR", "field": "kontext_cond"        },
+                "destination": {"node_id": "flux_denoise:9SHZg1d4kC", "field": "kontext_conditioning"}
+            },
+            {
+                "source"     : {"node_id": "flux_vae_decode:Vr4fbsSEgU", "field": "image"},
+                "destination": {"node_id": "canvas_output:FhpncF2ITc",   "field": "image"}
+            },
+            {
+                "source"     : {"node_id": "core_metadata:oCIejDlaQA", "field": "metadata"},
+                "destination": {"node_id": "canvas_output:FhpncF2ITc", "field": "metadata"}
+            }
+        ]
+    },
+    "runs": 1
+  },
+  "priority": 0
+}
+
+
+def modify_workflow_for_kontext(workflow_data, prompt, image_name):
+    """
+    Modifies the workflow data with the provided prompt and image name.
+    
+    Args:
+        workflow_data (dict): The workflow dictionary to modify
+        prompt (str): The prompt to use for generation
+        image_name (str): The name of the uploaded image
+        
+    Returns:
+        dict: The modified workflow data
+    """
+    try:
+        # Create a deep copy of the workflow to avoid modifying the original
+        import copy
+        modified_workflow = copy.deepcopy(workflow_data)
+        
+        # Update the prompt node
+        prompt_node_id = "positive_prompt:0oQdkhpu9K"
+        modified_workflow['batch']['graph']['nodes'][prompt_node_id]['value'] = prompt
+        logging.info(f"Updated prompt to: {prompt}")
+        
+        # Update the kontext node with the uploaded image
+        kontext_node_id = "flux_kontext:MsQ9ynwazR"
+        modified_workflow['batch']['graph']['nodes'][kontext_node_id]['image']['image_name'] = image_name
+        logging.info(f"Updated kontext image to: {image_name}")
+        
+        return modified_workflow
+        
+    except Exception as e:
+        logging.error(f"Error modifying workflow: {e}")
+        return None
+
+
+def submit_workflow_to_invokeai(workflow_data, invokeai_url):
+    """
+    Submits the modified workflow data to the InvokeAI API endpoint.
+    
+    Args:
+        workflow_data (dict): The workflow data to submit
+        invokeai_url (str): The base URL for InvokeAI
+        
+    Returns:
+        bool: True on success, False on failure
+    """
+    api_endpoint = f"{invokeai_url}/api/v1/queue/default/enqueue_batch"
+    headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+    
+    logging.info(f"Submitting workflow to InvokeAI API at {api_endpoint}...")
+    
+    try:
+        response = requests.post(
+            api_endpoint,
+            json=workflow_data,
+            headers=headers,
+            timeout=60
+        )
+        
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        logging.info("Workflow submitted successfully to the queue!")
+        logging.info(f"API Response Status Code: {response.status_code}")
+        
+        try:
+            response_json = response.json()
+            # logging.info(f"API Response: {json.dumps(response_json, indent=2)}")
+        except json.JSONDecodeError:
+            logging.info(f"API Response (non-JSON): {response.text}")
+            
+        return True
+        
+    except requests.exceptions.ConnectionError as e:
+        logging.error(f"Could not connect to the InvokeAI server at {invokeai_url}")
+        logging.error(f"Details: {e}")
+        return False
+    except requests.exceptions.Timeout:
+        logging.error("The request to the InvokeAI server timed out after 60 seconds")
+        return False
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"InvokeAI API request failed with status code {e.response.status_code}")
+        logging.error(f"URL: {e.request.url}")
+        try:
+            error_json = e.response.json()
+            logging.error(f"Error Response: {json.dumps(error_json, indent=2)}")
+        except json.JSONDecodeError:
+            logging.error(f"Error Response: {e.response.text}")
+        return False
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during API submission: {e}")
+        return False
+
+
+def generate_image_using_kontext_worker(GALLERY_DIRECTORY: str, invokeai_url: str, board_id: str = None, prompt: str = None):
+    ''' Background worker function to upload screenshot and process with InvokeAI '''
+    try:
+        logging.info(f'Starting background image generation using kontext from directory: {GALLERY_DIRECTORY}')
+        
+        # Use default prompt if none provided
+        if not prompt:
+            prompt = "make it in the style of studio ghibli anime"
+            logging.info(f'No prompt provided, using default: {prompt}')
+        else:
+            logging.info(f'Using provided prompt: {prompt}')
+        
+        # Look for common screenshot file extensions
+        screenshot_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff'}
+        
+        # Find the most recent screenshot recursively
+        latest_screenshot_path = find_most_recent_image(GALLERY_DIRECTORY, screenshot_extensions)
+        
+        if not latest_screenshot_path:
+            logging.error(f'No screenshot files found in directory or subdirectories: {GALLERY_DIRECTORY}')
+            return
+        
+        logging.info(f'Using most recent screenshot: {latest_screenshot_path}')
+        
+        # Step 1: Upload the image using the requests library
+        image_name = upload_image_to_invoke(latest_screenshot_path, invokeai_url, board_id)
+        
+        if not image_name:
+            logging.error('Failed to upload image to InvokeAI')
+            return
+        
+        logging.info(f'Successfully uploaded image with name: {image_name}')
+        
+        # Step 2: Modify the workflow with the prompt and image name
+        modified_workflow = modify_workflow_for_kontext(INVOKEAI_FLUX_KONTEXT_WORKFLOW, prompt, image_name)
+        
+        if not modified_workflow:
+            logging.error('Failed to modify workflow')
+            return
+        
+        # Step 3: Submit the workflow to InvokeAI
+        success = submit_workflow_to_invokeai(modified_workflow, invokeai_url)
+        
+        if success:
+            logging.info('Successfully submitted Flux Kontext workflow to InvokeAI')
+        else:
+            logging.error('Failed to submit workflow to InvokeAI')
+                
+    except Exception as e:
+        logging.error(f'Unexpected error during Flux Kontext generation: {e}')
+
+
+def generate_image_using_kontext(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `generate_image_using_kontext` function
+
+    Uploads the most recent screenshot from GALLERY_DIRECTORY to InvokeAI and runs Flux Kontext workflow.
+
+    Args:
+        params: Function parameters (can include 'prompt')
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    '''
+    logging.info(f'Executing generate_image_using_kontext with params: {params}')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        # Check if GALLERY_DIRECTORY is configured
+        global GALLERY_DIRECTORY
+        if not GALLERY_DIRECTORY:
+            return generate_failure_response('GALLERY_DIRECTORY not configured. Please set GALLERY_DIRECTORY in config.json')
+        
+        # Get prompt from parameters (optional)
+        prompt = params.get('prompt', '') if params else ''
+        
+        global INVOKEAI_URL
+        
+        # Start Flux Kontext generation in background thread
+        thread = threading.Thread(
+            target=generate_image_using_kontext_worker,
+            args=(GALLERY_DIRECTORY, INVOKEAI_URL, BOARD_ID, prompt),
+            daemon=True
+        )
+        thread.start()
+        
+        if prompt:
+            logging.info(f'Started background Flux Kontext generation thread with prompt: {prompt}')
+            return generate_success_response(f'Your Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY} with prompt: "{prompt}"')
+        else:
+            logging.info(f'Started background Flux Kontext generation thread with default prompt')
+            return generate_success_response(f'Your Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}')
+        
+    except Exception as e:
+        logging.error(f'Error in generate_image_using_kontext: {str(e)}')
+        return generate_failure_response(f'Error in generate_image_using_kontext: {str(e)}')
+
+
+def invokeai_status(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `invokeai_status` function
+
+    Checks the status of the InvokeAI service by calling the /api/v1/app/version endpoint.
+
+    Args:
+        params: Function parameters (not used)
+        context: Context information (not used)
+        system_info: System information (not used)
+
+    Returns:
+        The function return value with InvokeAI version information
+    '''
+    logging.info('Executing invokeai_status')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        global INVOKEAI_URL
+        
+        # Construct the version endpoint URL
+        version_url = f"{INVOKEAI_URL}/api/v1/app/version"
+        
+        logging.info(f'Checking InvokeAI status at: {version_url}')
+        
+        # Make the request to the version endpoint
+        response = requests.get(version_url, timeout=10)
+        
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        # Parse the JSON response
+        version_data = response.json()
+        
+        # Extract the version from the response
+        version = version_data.get('version', 'Unknown')
+        highlights = version_data.get('highlights', [])
+        
+        logging.info(f'InvokeAI version: {version}')
+        
+        # Create a formatted response message
+        message = f"InvokeAI service is running. Version: {version}"
+        
+        if highlights:
+            message += f"\nHighlights: {', '.join(highlights)}"
+        
+        return generate_success_response(message)
+        
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Could not connect to InvokeAI server at {INVOKEAI_URL}. Is the service running?"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.Timeout:
+        error_msg = "Request to InvokeAI server timed out"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"InvokeAI API request failed with status code {e.response.status_code}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except json.JSONDecodeError as e:
+        error_msg = f"Failed to parse InvokeAI response: {e}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except Exception as e:
+        error_msg = f'Unexpected error checking InvokeAI status: {str(e)}'
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+
+
+def pause_invokeai_processor(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `pause_invokeai_processor` function
+
+    Pauses the InvokeAI processor by calling the /api/v1/queue/default/processor/pause endpoint.
+
+    Args:
+        params: Function parameters (not used)
+        context: Context information (not used)
+        system_info: System information (not used)
+
+    Returns:
+        The function return value indicating success or failure
+    '''
+    logging.info('Executing pause_invokeai_processor')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        global INVOKEAI_URL
+        
+        # Construct the pause endpoint URL
+        pause_url = f"{INVOKEAI_URL}/api/v1/queue/default/processor/pause"
+        
+        logging.info(f'Pausing InvokeAI processor at: {pause_url}')
+        
+        # Make the PUT request to pause the processor
+        response = requests.put(pause_url, timeout=10)
+        
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        logging.info('Successfully paused InvokeAI processor')
+        
+        return generate_success_response("InvokeAI processor has been paused successfully")
+        
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Could not connect to InvokeAI server at {INVOKEAI_URL}. Is the service running?"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.Timeout:
+        error_msg = "Request to InvokeAI server timed out"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"InvokeAI API request failed with status code {e.response.status_code}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except Exception as e:
+        error_msg = f'Unexpected error pausing InvokeAI processor: {str(e)}'
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+
+
+def resume_invokeai_processor(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `resume_invokeai_processor` function
+
+    Resumes the InvokeAI processor by calling the /api/v1/queue/default/processor/resume endpoint.
+
+    Args:
+        params: Function parameters (not used)
+        context: Context information (not used)
+        system_info: System information (not used)
+
+    Returns:
+        The function return value indicating success or failure
+    '''
+    logging.info('Executing resume_invokeai_processor')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        global INVOKEAI_URL
+        
+        # Construct the resume endpoint URL
+        resume_url = f"{INVOKEAI_URL}/api/v1/queue/default/processor/resume"
+        
+        logging.info(f'Resuming InvokeAI processor at: {resume_url}')
+        
+        # Make the PUT request to resume the processor
+        response = requests.put(resume_url, timeout=10)
+        
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        logging.info('Successfully resumed InvokeAI processor')
+        
+        return generate_success_response("InvokeAI processor has been resumed successfully")
+        
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Could not connect to InvokeAI server at {INVOKEAI_URL}. Is the service running?"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.Timeout:
+        error_msg = "Request to InvokeAI server timed out"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"InvokeAI API request failed with status code {e.response.status_code}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except Exception as e:
+        error_msg = f'Unexpected error resuming InvokeAI processor: {str(e)}'
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+
+
+def invokeai_empty_model_cache(params:dict=None, context:dict=None, system_info:dict=None) -> dict:
+    ''' Command handler for `invokeai_empty_model_cache` function
+
+    Empties the InvokeAI model cache to free up VRAM by calling the /api/v2/models/empty_model_cache endpoint.
+
+    Args:
+        params: Function parameters (not used)
+        context: Context information (not used)
+        system_info: System information (not used)
+
+    Returns:
+        The function return value indicating success or failure
+    '''
+    logging.info('Executing invokeai_empty_model_cache')
+    
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+        
+        global INVOKEAI_URL
+        
+        # Construct the empty model cache endpoint URL
+        empty_cache_url = f"{INVOKEAI_URL}/api/v2/models/empty_model_cache"
+        
+        logging.info(f'Emptying InvokeAI model cache at: {empty_cache_url}')
+        
+        # Make the POST request to empty the model cache
+        response = requests.post(empty_cache_url, timeout=30)
+        
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        logging.info('Successfully emptied InvokeAI model cache')
+        
+        return generate_success_response("InvokeAI model cache has been emptied successfully")
+        
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Could not connect to InvokeAI server at {INVOKEAI_URL}. Is the service running?"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.Timeout:
+        error_msg = "Request to InvokeAI server timed out"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"InvokeAI API request failed with status code {e.response.status_code}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except Exception as e:
+        error_msg = f'Unexpected error emptying InvokeAI model cache: {str(e)}'
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+
+
+if __name__ == '__main__':
+    main()
