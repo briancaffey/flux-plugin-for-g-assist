@@ -1,3 +1,5 @@
 pywin32>=223  # For Windows-specific functionality (windll)
 pyinstaller==6.11.0
 requests
+Pillow>=10.0.0  # For image manipulation (PIL)
+black

@@ -45,6 +45,52 @@
       "properties": {}
     },
     {
+      "name": "flux_kontext_nim_ready_check",
+      "description": "Test health endpoints for Flux Kontext NIM server",
+      "tags": [
+        "kontext",
+        "nim",
+        "ready",
+        "health",
+        "endpoints",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "check_flux_kontext_nim_status",
+      "description": "Check the status of the Flux Kontext NIM server",
+      "tags": [
+        "kontext",
+        "nim",
+        "status",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "stop_flux_kontext_nim",
+      "description": "Stop the Flux Kontext NIM server",
+      "tags": [
+        "kontext",
+        "nim",
+        "stop",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "start_flux_kontext_nim",
+      "description": "Start the Flux Kontext NIM server",
+      "tags": [
+        "kontext",
+        "nim",
+        "start",
+        "flux"
+      ],
+      "properties": {}
+    },
+    {
       "name": "generate_image",
       "description": "Generate an image using the Flux NIM API",
       "tags": [
@@ -75,6 +121,10 @@
         "prompt": {
           "type": "string",
           "description": "Text prompt for Flux Kontext generation (optional)"
+        },
+        "steps": {
+          "type": "integer",
+          "description": "Number of inference steps for image generation (optional, defaults to 30, range 20-50)"
         }
       }
     },

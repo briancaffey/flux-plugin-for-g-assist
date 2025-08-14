@@ -29,6 +29,12 @@ The goal of this plugin is to make generative image workflows faster, more acces
 - **VRAM management** - empty model cache to free up memory
 - **Status monitoring** - check InvokeAI service health and version
 
+### Flux Kontext NIM Integration
+- **Direct API access** to Flux Kontext NIM servers for faster inference
+- **Automatic image preparation** - screenshots are scaled and cropped to optimal dimensions
+- **Seamless backend switching** - automatically chooses between NIM and InvokeAI based on configuration
+- **High-performance image-to-image generation** with minimal latency
+
 ### Smart Configuration
 - **Flexible URL configuration** - works with local servers or NVIDIA hosted endpoints
 - **Automatic API key validation** - ensures proper NVIDIA API key format
@@ -38,7 +44,7 @@ The goal of this plugin is to make generative image workflows faster, more acces
 ### Example Commands
 - "hey flux, generate an image of a cyberpunk city at night"
 - "hey flux, start the Flux NIM server"
-- "hey flux, use kontext to make it a cartoon style" (does image-to-image generation using latest screenshot taken with NVIDIA screenshot shortcut)
+- "hey flux, use kontext to make it a cartoon style" (does image-to-image generation using latest screenshot taken with NVIDIA screenshot shortcut - automatically chooses between Flux Kontext NIM and InvokeAI backends)
 - "hey flux, empty the InvokeAI model cache to free up VRAM"
 - "hey flux, Check if the NIM server is running"
 
@@ -48,6 +54,7 @@ Make sure you have:
 - Python 3.12 or higher
 - G-Assist installed on your system
 - pywin32 >= 223
+- Pillow >= 10.0.0 (for image manipulation)
 - Basic knowledge of Python
 
 💡 **Tip**: Use a virtual environment to keep your plugin dependencies isolated from other Python projects!
@@ -69,6 +76,8 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
+**Note**: The requirements now include Pillow (PIL) for image manipulation capabilities used by the Flux Kontext NIM functionality.
+
 ### Step 3: Build the project
 
 Run `build.bat` to build the project. This script will also place the `g-assist-plugin-flux.exe` and `manifest.json` files in `%PROGRAMDATA%\NVIDIA Corporation\nvtopps\rise\plugins\flux`.
@@ -85,6 +94,7 @@ Copy the `config.example.json` file and rename it as `config.json` and place it 
     "HF_TOKEN": "hf_xxxxxxxx",
     "LOCAL_NIM_CACHE": "~/.cache/nim",
     "INVOKEAI_URL": "http://localhost:9090",
+    "FLUX_KONTEXT_NIM_URL": "http://localhost:8011",
     "OUTPUT_DIRECTORY": "E:\\Flux"
 }
 ```
@@ -102,7 +112,13 @@ Follow instructions [here](https://build.nvidia.com/black-forest-labs/flux_1-dev
 
 InvokeAI has a Windows installer that can be found here: [https://invoke-ai.github.io/InvokeAI/installation/quick_start/#step-2-download](https://invoke-ai.github.io/InvokeAI/installation/quick_start/#step-2-download). Download the Flux models including the **FLUX.1 Kontext dev (Quantized)** model for using Flux Kontext in the Flux Plug-in for G-Assist. By default InvokeAI runs on `http://localhost:9090`.
 
-### Step 7: Start the NVIDIA NIM
+### Step 7: Set up Flux Kontext NIM (optional)
+
+For faster Flux Kontext inference, you can set up a dedicated Flux Kontext NIM server. This provides direct API access without the overhead of InvokeAI. The plugin will automatically detect and use this server when `FLUX_KONTEXT_NIM_URL` is configured in your `config.json`.
+
+**Note**: The Flux Kontext NIM is currently in development and may not be publicly available yet. When it becomes available, you'll be able to run it locally or access it through NVIDIA's hosted services.
+
+### Step 8: Start the NVIDIA NIM
 
 Ask flux if this NIM is running. If it is not running, ask flux to start the NIM. This will run a command to star the NIM container in WSL using podman: 
 
@@ -121,7 +137,7 @@ podman_cmd = [
 
 Then ask if the NIM is ready. This will check the `/v1/health/live` and `/v1/health/ready` endpoints of the Flux NIM.
 
-### Step 8: Generete AI images using the Flux Plug-in in the G-Assist chat window
+### Step 9: Generete AI images using the Flux Plug-in in the G-Assist chat window
 
 Send a message to G-Assist:
 
@@ -133,9 +149,14 @@ flux> Your image generation request is in progress! Prompt: "a cat piloting a sp
 
 When the image generation is complete you will find the image on your Desktop background, and the image will be saved to the output directory specified in your configuration file.
 
-### Step 9: Transform a screenshot with Flux Kontext
+### Step 10: Transform a screenshot with Flux Kontext
 
 Take a screenshot using the NVIDIA Screenshot hotkey (usually `Alt + F1`), and then ask the Flux Plug-in to transform it to any style using Kontext.
+
+**Note**: The plugin automatically chooses the best available backend for Flux Kontext generation:
+- If `FLUX_KONTEXT_NIM_URL` is configured, it will use the dedicated NIM server for faster inference
+- If only `INVOKEAI_URL` is configured, it will use InvokeAI as before
+- You can have both configured, and the plugin will prioritize the NIM backend for better performance
 
 ![Cat piloting spaceship](img/cat_spaceship.png)
 
@@ -164,6 +185,7 @@ The Flux plugin uses a `config.json` file to manage all settings. Copy `config.e
 | `HF_TOKEN` | `"hf_your-token"` | Yes** |
 | `LOCAL_NIM_CACHE` | `~/.cache/nim` | Yes** |
 | `INVOKEAI_URL` | `"http://localhost:9090"`, `"http://192.168.1.100:9090"` | No |
+| `FLUX_KONTEXT_NIM_URL` | `"http://localhost:8011"`, `"http://192.168.1.100:8011"` | No |
 | `BOARD_ID` | `"my-gallery-board"`, `"flux-gallery"` | No |
 | `OUTPUT_DIRECTORY` | `"C:\\GeneratedImages"`, `"D:\\flux-output"` | No |
 
@@ -238,6 +260,42 @@ To use the image-to-image features, you'll need:
 - InvokeAI installed and running locally (typically on `http://localhost:9090`)
 - Flux Kontext model loaded in InvokeAI
 - Proper configuration in your `config.json` file
+
+## Image-to-image generation with Flux Kontext NIM
+
+The Flux Plug-in now supports direct image-to-image generation using the Flux Kontext NIM server, providing a faster and more direct alternative to InvokeAI for Flux Kontext workflows.
+
+### How It Works
+When you use the `generate_image_using_kontext` function, the plugin automatically chooses between two backends:
+
+1. **Flux Kontext NIM** (if `FLUX_KONTEXT_NIM_URL` is configured)
+2. **InvokeAI** (if `INVOKEAI_URL` is configured)
+
+The plugin will use the first configured backend it finds, prioritizing Flux Kontext NIM for better performance.
+
+### Flux Kontext NIM Features
+- **Direct API access** to the Flux Kontext NIM server
+- **Automatic image preparation** - screenshots are automatically scaled and cropped to 1392x752
+- **Fast inference** - optimized for quick image-to-image transformations
+- **Base64 encoding** - handles image conversion automatically
+- **Desktop background setting** - generated images become your wallpaper
+
+### Screenshot Processing
+The plugin automatically:
+- Finds your most recent screenshot from the configured `GALLERY_DIRECTORY`
+- Scales and crops the image to 1392x752 dimensions (maintaining aspect ratio)
+- Converts the image to base64 format for API transmission
+- Saves the generated result to your `OUTPUT_DIRECTORY`
+
+### Configuration
+To use Flux Kontext NIM, add this to your `config.json`:
+```json
+{
+    "FLUX_KONTEXT_NIM_URL": "http://localhost:8011"
+}
+```
+
+**Note**: The plugin will automatically detect which backend to use based on your configuration. You can have both configured, and the plugin will prioritize Flux Kontext NIM when available.
 
 ## Supported Commands
 
