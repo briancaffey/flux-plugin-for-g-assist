@@ -219,6 +219,10 @@ def main():
         "pause_invokeai_processor": pause_invokeai_processor,
         "resume_invokeai_processor": resume_invokeai_processor,
         "invokeai_empty_model_cache": invokeai_empty_model_cache,
+        "flux_kontext_nim_ready_check": flux_kontext_nim_ready_check,
+        "check_flux_kontext_nim_status": check_flux_kontext_nim_status,
+        "stop_flux_kontext_nim": stop_flux_kontext_nim,
+        "start_flux_kontext_nim": start_flux_kontext_nim,
     }
     cmd = ""
 
@@ -391,6 +395,30 @@ def generate_progress_response(
     return response
 
 
+def validate_output_directory():
+    """Validate that OUTPUT_DIRECTORY can be created and is writable"""
+    global OUTPUT_DIRECTORY
+    try:
+        # Try to create the directory if it doesn't exist
+        os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+        
+        # Test if we can write to the directory
+        test_file = os.path.join(OUTPUT_DIRECTORY, ".test_write_permission")
+        try:
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)  # Clean up test file
+            logging.info(f"OUTPUT_DIRECTORY '{OUTPUT_DIRECTORY}' is valid and writable")
+            return True
+        except (OSError, PermissionError) as e:
+            logging.error(f"OUTPUT_DIRECTORY '{OUTPUT_DIRECTORY}' is not writable: {e}")
+            return False
+            
+    except (OSError, PermissionError) as e:
+        logging.error(f"Failed to create OUTPUT_DIRECTORY '{OUTPUT_DIRECTORY}': {e}")
+        return False
+
+
 def execute_initialize_command() -> dict:
     """Command handler for `initialize` function
 
@@ -403,8 +431,25 @@ def execute_initialize_command() -> dict:
         The function return value(s)
     """
     logging.info("Initializing plugin")
-    # initialization function body
-    return generate_success_response("initialize success.")
+    
+    # Validate configuration
+    validation_results = []
+    
+    # Validate OUTPUT_DIRECTORY
+    if not validate_output_directory():
+        validation_results.append("OUTPUT_DIRECTORY configuration is invalid")
+    
+    # Check other critical configurations
+    if not GALLERY_DIRECTORY:
+        validation_results.append("GALLERY_DIRECTORY not configured")
+    
+    if validation_results:
+        warning_msg = f"Plugin initialized with warnings: {'; '.join(validation_results)}"
+        logging.warning(warning_msg)
+        return generate_success_response(f"initialize success. {warning_msg}")
+    else:
+        logging.info("Plugin initialized successfully with all configurations valid")
+        return generate_success_response("initialize success.")
 
 
 def execute_shutdown_command() -> dict:
@@ -707,6 +752,284 @@ def start_nim(
         return generate_failure_response(f"Error in start_nim: {str(e)}")
 
 
+def flux_kontext_nim_ready_check(
+    params: dict = None, context: dict = None, system_info: dict = None
+) -> dict:
+    """Command handler for `flux_kontext_nim_ready_check` function
+
+    Tests health endpoints using the configured FLUX_KONTEXT_NIM_URL.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    """
+    logging.info(f"Executing flux_kontext_nim_ready_check with params: {params}")
+
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+
+        # Get the base URL from configuration
+        global FLUX_KONTEXT_NIM_URL
+        if not FLUX_KONTEXT_NIM_URL:
+            return generate_failure_response(
+                "FLUX_KONTEXT_NIM_URL not configured. Please set FLUX_KONTEXT_NIM_URL in config.json"
+            )
+
+        # Extract base URL for health endpoints
+        base_url = FLUX_KONTEXT_NIM_URL
+
+        # Step 1: Test live endpoint
+        logging.info("Testing /v1/health/live endpoint...")
+        live_url = f"{base_url}/v1/health/live"
+
+        try:
+            with urllib.request.urlopen(live_url, timeout=5) as response:
+                live_status = response.getcode()
+                logging.info(f"Live endpoint status: {live_status}")
+                if live_status != 200:
+                    return generate_failure_response(
+                        f"Live endpoint returned status {live_status}"
+                    )
+        except urllib.error.URLError as e:
+            logging.error(f"Error accessing live endpoint: {e}")
+            return generate_failure_response(f"Live endpoint error: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error with live endpoint: {e}")
+            return generate_failure_response(f"Live endpoint error: {e}")
+
+        # Step 2: Test ready endpoint
+        logging.info("Testing /v1/health/ready endpoint...")
+        ready_url = f"{base_url}/v1/health/ready"
+
+        try:
+            with urllib.request.urlopen(ready_url, timeout=5) as response:
+                ready_status = response.getcode()
+                logging.info(f"Ready endpoint status: {ready_status}")
+                if ready_status != 200:
+                    return generate_failure_response(
+                        f"Ready endpoint returned status {ready_status}"
+                    )
+        except urllib.error.URLError as e:
+            logging.error(f"Error accessing ready endpoint: {e}")
+            return generate_failure_response(f"Ready endpoint error: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error with ready endpoint: {e}")
+            return generate_failure_response(f"Ready endpoint error: {e}")
+
+        # Step 3: Success response
+        logging.info("Both health endpoints are working!")
+        final_response = generate_success_response("Flux Kontext NIM service is live and ready!")
+        logging.info(f"Final response: {final_response}")
+        return final_response
+
+    except Exception as e:
+        logging.error(f"Error in flux_kontext_nim_ready_check: {str(e)}")
+        return generate_failure_response(f"Error in flux_kontext_nim_ready_check: {str(e)}")
+
+
+def check_flux_kontext_nim_status(
+    params: dict = None, context: dict = None, system_info: dict = None
+) -> dict:
+    """Command handler for `check_flux_kontext_nim_status` function
+
+    Checks the status of the flux kontext NIM server using WSL and podman.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    """
+    logging.info(f"Executing check_flux_kontext_nim_status with params: {params}")
+
+    try:
+        # Check if flux-kontext-nim-server container is running using WSL and podman
+        logging.info("Checking if flux-kontext-nim-server container is running...")
+        check_cmd = [
+            "wsl",
+            "-d",
+            "NVIDIA-Workbench",
+            "podman",
+            "ps",
+            "--filter",
+            "name=flux-kontext-nim-server",
+            "--format",
+            "{{.Names}}",
+        ]
+
+        try:
+            result = subprocess.run(
+                check_cmd, check=True, capture_output=True, text=True
+            )
+            container_names = result.stdout.strip()
+            logging.info(f"Flux Kontext NIM server container names: {container_names}")
+
+            if container_names:
+                return generate_success_response(
+                    f"Flux Kontext NIM server is running. Container: {container_names}"
+                )
+            else:
+                return generate_failure_response("Flux Kontext NIM server is not running.")
+
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Error checking Flux Kontext NIM server status: {e}")
+            return generate_failure_response(f"Error checking Flux Kontext NIM server status: {e}")
+        except FileNotFoundError:
+            logging.error("WSL or podman command not found")
+            return generate_failure_response("WSL or podman command not found")
+        except Exception as e:
+            logging.error(f"Unexpected error checking Flux Kontext NIM server status: {e}")
+            return generate_failure_response(f"Error checking Flux Kontext NIM server status: {e}")
+
+    except Exception as e:
+        logging.error(f"Error in check_flux_kontext_nim_status: {str(e)}")
+        return generate_failure_response(f"Error in check_flux_kontext_nim_status: {str(e)}")
+
+
+def stop_flux_kontext_nim(
+    params: dict = None, context: dict = None, system_info: dict = None
+) -> dict:
+    """Command handler for `stop_flux_kontext_nim` function
+
+    Stops the flux kontext NIM server using WSL and podman.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    """
+    logging.info(f"Executing stop_flux_kontext_nim with params: {params}")
+
+    try:
+        # Stop the flux-kontext-nim-server container using WSL and podman
+        logging.info("Stopping flux-kontext-nim-server container...")
+        stop_cmd = ["wsl", "-d", "NVIDIA-Workbench", "podman", "kill", "flux-kontext-nim-server"]
+
+        try:
+            result = subprocess.run(
+                stop_cmd, check=True, capture_output=True, text=True
+            )
+            logging.info(f"Flux Kontext NIM server stop result: {result.stdout.strip()}")
+
+            return generate_success_response("Flux Kontext NIM server stopped successfully.")
+
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Error stopping Flux Kontext NIM server: {e}")
+            return generate_failure_response(f"Error stopping Flux Kontext NIM server: {e}")
+        except FileNotFoundError:
+            logging.error("WSL or podman command not found")
+            return generate_failure_response("WSL or podman command not found")
+        except Exception as e:
+            logging.error(f"Unexpected error stopping Flux Kontext NIM server: {e}")
+            return generate_failure_response(f"Error stopping Flux Kontext NIM server: {e}")
+
+    except Exception as e:
+        logging.error(f"Error in stop_flux_kontext_nim: {str(e)}")
+        return generate_failure_response(f"Error in stop_flux_kontext_nim: {str(e)}")
+
+
+def start_flux_kontext_nim(
+    params: dict = None, context: dict = None, system_info: dict = None
+) -> dict:
+    """Command handler for `start_flux_kontext_nim` function
+
+    Starts the flux kontext NIM server using WSL and podman with configuration from config.json.
+
+    Args:
+        params: Function parameters
+        context: Context information
+        system_info: System information
+
+    Returns:
+        The function return value(s)
+    """
+    logging.info(f"Executing start_flux_kontext_nim with params: {params}")
+
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+
+        # Check configuration requirements
+        global NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE
+        if not NGC_API_KEY or NGC_API_KEY == "YOUR_NGC_API_KEY_HERE":
+            return generate_failure_response(
+                "NGC API key not configured. Please set NGC_API_KEY in config.json"
+            )
+
+        if not HF_TOKEN or HF_TOKEN == "YOUR_HF_TOKEN_HERE":
+            return generate_failure_response(
+                "HF Token not configured. Please set HF_TOKEN in config.json"
+            )
+
+        if not LOCAL_NIM_CACHE or LOCAL_NIM_CACHE == "/path/to/your/nim/cache":
+            return generate_failure_response(
+                "Local NIM cache path not configured. Please set LOCAL_NIM_CACHE in config.json"
+            )
+
+        # Check if Flux Kontext NIM server is already running
+        logging.info("Checking if Flux Kontext NIM server is already running...")
+        check_result = check_flux_kontext_nim_status()
+        if check_result.get("success", False):
+            return generate_failure_response("Flux Kontext NIM server is already running.")
+
+        # Build the podman command
+        logging.info("Starting Flux Kontext NIM server...")
+        podman_cmd = [
+            "wsl",
+            "-d",
+            "NVIDIA-Workbench",
+            "podman",
+            "run",
+            "-d",
+            "--rm",
+            "--name=flux-kontext-nim-server",
+            "--device",
+            "nvidia.com/gpu=all",
+            "-e",
+            f"NGC_API_KEY={NGC_API_KEY}",
+            "-e",
+            f"HF_TOKEN={HF_TOKEN}",
+            "-p",
+            "8011:8000",
+            "-v",
+            f"{LOCAL_NIM_CACHE}:/opt/nim/.cache/",
+            "nvcr.io/nim/black-forest-labs/flux.1-kontext-dev:latest",
+        ]
+
+        try:
+            # Start the container in the background
+            result = subprocess.run(
+                podman_cmd, check=True, capture_output=True, text=True
+            )
+            logging.info(f"Flux Kontext NIM server start result: {result.stdout.strip()}")
+
+            return generate_success_response("Flux Kontext NIM server started successfully.")
+
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Error starting Flux Kontext NIM server: {e}")
+            return generate_failure_response(f"Error starting Flux Kontext NIM server: {e}")
+        except FileNotFoundError:
+            logging.error("WSL or podman command not found")
+            return generate_failure_response("WSL or podman command not found")
+        except Exception as e:
+            logging.error(f"Unexpected error starting Flux Kontext NIM server: {e}")
+            return generate_failure_response(f"Error starting Flux Kontext NIM server: {e}")
+
+    except Exception as e:
+        logging.error(f"Error in start_flux_kontext_nim: {str(e)}")
+        return generate_failure_response(f"Error in start_flux_kontext_nim: {str(e)}")
+
+
 def generate_image_worker(
     prompt: str, output_dir: str, flux_url: str, nvidia_api_key: str
 ):
@@ -840,8 +1163,13 @@ def generate_image(
 
         # Ensure output directory exists
         global OUTPUT_DIRECTORY
-        os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
-        logging.info(f"Output directory: {OUTPUT_DIRECTORY}")
+        try:
+            os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+            logging.info(f"Output directory: {OUTPUT_DIRECTORY}")
+        except (OSError, PermissionError) as e:
+            error_msg = f"Failed to create output directory '{OUTPUT_DIRECTORY}': {e}. Please check the path and permissions."
+            logging.error(error_msg)
+            return generate_failure_response(error_msg)
 
         # Start image generation in background thread
         thread = threading.Thread(
@@ -1345,7 +1673,7 @@ def submit_workflow_to_invokeai(workflow_data, invokeai_url):
 
 
 def generate_image_using_kontext_worker(
-    GALLERY_DIRECTORY: str, invokeai_url: str, board_id: str = None, prompt: str = None
+    GALLERY_DIRECTORY: str, invokeai_url: str, board_id: str = None, prompt: str = None, steps: int = 30
 ):
     """Background worker function to upload screenshot and process with InvokeAI"""
     try:
@@ -1409,13 +1737,23 @@ def generate_image_using_kontext_worker(
 
 
 def generate_image_using_kontext_nim_worker(
-    gallery_directory: str, flux_kontext_nim_url: str, prompt: str = None
+    gallery_directory: str, flux_kontext_nim_url: str, prompt: str = None, steps: int = 30
 ):
     """Background worker function to process screenshot with Flux Kontext NIM"""
     try:
         logging.info(
             f"Starting background image generation using Flux Kontext NIM from directory: {gallery_directory}"
         )
+
+        # Ensure output directory exists
+        global OUTPUT_DIRECTORY
+        try:
+            os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+            logging.info(f"Output directory: {OUTPUT_DIRECTORY}")
+        except (OSError, PermissionError) as e:
+            error_msg = f"Failed to create output directory '{OUTPUT_DIRECTORY}': {e}. Please check the path and permissions."
+            logging.error(error_msg)
+            return
 
         # Use default prompt if none provided
         if not prompt:
@@ -1457,7 +1795,7 @@ def generate_image_using_kontext_nim_worker(
             "aspect_ratio": "match_input_image",
             "samples": 1,
             "seed": 0,  # random seed
-            "steps": 15,  # low step count for faster inference
+            "steps": steps,  # use the steps parameter
         }
 
         headers = {"accept": "application/json", "content-type": "application/json"}
@@ -1548,7 +1886,7 @@ def generate_image_using_kontext(
     Chooses between Flux Kontext NIM and InvokeAI backends based on configuration.
 
     Args:
-        params: Function parameters (can include 'prompt')
+        params: Function parameters (can include 'prompt' and 'steps')
         context: Context information
         system_info: System information
 
@@ -1568,8 +1906,17 @@ def generate_image_using_kontext(
                 "GALLERY_DIRECTORY not configured. Please set GALLERY_DIRECTORY in config.json"
             )
 
-        # Get prompt from parameters (optional)
+        # Get parameters from params (optional)
         prompt = params.get("prompt", "") if params else ""
+        steps = params.get("steps", 30) if params else 30  # Default to 30 steps
+
+        # Validate steps parameter
+        try:
+            steps = int(steps)
+            if steps < 20 or steps > 50:
+                return generate_failure_response("Steps parameter must be between 20 and 50")
+        except (ValueError, TypeError):
+            return generate_failure_response("Steps parameter must be an integer")
 
         # Determine which backend to use based on configuration
         if FLUX_KONTEXT_NIM_URL:
@@ -1579,7 +1926,7 @@ def generate_image_using_kontext(
             # Start Flux Kontext NIM generation in background thread
             thread = threading.Thread(
                 target=generate_image_using_kontext_nim_worker,
-                args=(GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, prompt),
+                args=(GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, prompt, steps),
                 daemon=True,
             )
             thread.start()
@@ -1606,7 +1953,7 @@ def generate_image_using_kontext(
             # Start InvokeAI generation in background thread
             thread = threading.Thread(
                 target=generate_image_using_kontext_worker,
-                args=(GALLERY_DIRECTORY, INVOKEAI_URL, BOARD_ID, prompt),
+                args=(GALLERY_DIRECTORY, INVOKEAI_URL, BOARD_ID, prompt, steps),
                 daemon=True,
             )
             thread.start()

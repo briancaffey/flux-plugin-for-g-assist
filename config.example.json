@@ -5,6 +5,7 @@
     "NGC_API_KEY": "abc123",
     "HF_TOKEN": "hf_abc123",
     "LOCAL_NIM_CACHE": "~/.cache/nim",
+    "OUTPUT_DIRECTORY": "D:\\flux_output",
     "INVOKEAI_URL": "http://localhost:9090",
     "FLUX_KONTEXT_NIM_URL": "http://localhost:8011",
     "BOARD_ID": "optional-board-id"
