@@ -8,5 +8,7 @@
     "OUTPUT_DIRECTORY": "D:\\flux_output",
     "INVOKEAI_URL": "http://localhost:9090",
     "FLUX_KONTEXT_NIM_URL": "http://localhost:8011",
+    "COMFYUI_URL": "http://localhost:8188",
+    "FLUX_KONTEXT_INFERENCE_BACKEND": "NIM",
     "BOARD_ID": "optional-board-id"
 }

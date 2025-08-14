@@ -153,10 +153,11 @@ When the image generation is complete you will find the image on your Desktop ba
 
 Take a screenshot using the NVIDIA Screenshot hotkey (usually `Alt + F1`), and then ask the Flux Plug-in to transform it to any style using Kontext.
 
-**Note**: The plugin automatically chooses the best available backend for Flux Kontext generation:
-- If `FLUX_KONTEXT_NIM_URL` is configured, it will use the dedicated NIM server for faster inference
-- If only `INVOKEAI_URL` is configured, it will use InvokeAI as before
-- You can have both configured, and the plugin will prioritize the NIM backend for better performance
+**Note**: The plugin now uses the `FLUX_KONTEXT_INFERENCE_BACKEND` configuration to determine which backend to use for Flux Kontext generation:
+- Set to `"NIM"` to use the dedicated Flux Kontext NIM server for faster inference
+- Set to `"INVOKEAI"` to use InvokeAI as the backend
+- Set to `"COMFYUI"` to use ComfyUI as the backend
+- The plugin will validate that the chosen backend has a valid URL configuration before proceeding
 
 ![Cat piloting spaceship](img/cat_spaceship.png)
 
@@ -186,6 +187,8 @@ The Flux plugin uses a `config.json` file to manage all settings. Copy `config.e
 | `LOCAL_NIM_CACHE` | `~/.cache/nim` | Yes** |
 | `INVOKEAI_URL` | `"http://localhost:9090"`, `"http://192.168.1.100:9090"` | No |
 | `FLUX_KONTEXT_NIM_URL` | `"http://localhost:8011"`, `"http://192.168.1.100:8011"` | No |
+| `COMFYUI_URL` | `"http://localhost:8188"`, `"http://192.168.1.100:8188"` | No |
+| `FLUX_KONTEXT_INFERENCE_BACKEND` | `"NIM"`, `"INVOKEAI"`, `"COMFYUI"` | No |
 | `BOARD_ID` | `"my-gallery-board"`, `"flux-gallery"` | No |
 | `OUTPUT_DIRECTORY` | `"C:\\GeneratedImages"`, `"D:\\flux-output"` | No |
 
@@ -295,7 +298,78 @@ To use Flux Kontext NIM, add this to your `config.json`:
 }
 ```
 
-**Note**: The plugin will automatically detect which backend to use based on your configuration. You can have both configured, and the plugin will prioritize Flux Kontext NIM when available.
+**Note**: The plugin now uses the `FLUX_KONTEXT_INFERENCE_BACKEND` configuration to determine which backend to use. Set it to `"NIM"` to use the Flux Kontext NIM server.
+
+## Image-to-image generation with ComfyUI
+
+The Flux Plug-in now supports ComfyUI as a third backend for Flux Kontext workflows, providing access to the powerful node-based workflow system and NIM integration capabilities.
+
+### How It Works
+When you use the `generate_image_using_kontext` function, the plugin uses the `FLUX_KONTEXT_INFERENCE_BACKEND` configuration to determine which backend to use:
+
+1. **Flux Kontext NIM** (when set to `"NIM"`)
+2. **InvokeAI** (when set to `"INVOKEAI"`)
+3. **ComfyUI** (when set to `"COMFYUI"`)
+
+The plugin validates that the chosen backend has a valid URL configuration before proceeding with the generation.
+
+### ComfyUI Features
+- **Node-based workflows** - leverages ComfyUI's powerful visual workflow system
+- **NIM integration** - can use NIM nodes for Flux Kontext inference
+- **WebSocket communication** - real-time execution monitoring and image retrieval
+- **Automatic image upload** - screenshots are automatically uploaded to ComfyUI
+- **Workflow modification** - dynamically updates prompts, steps, and input images
+- **Desktop background setting** - generated images become your wallpaper
+
+### ComfyUI Workflow
+The plugin uses a pre-configured Flux Kontext workflow that includes:
+- **LoadImage node** - loads the uploaded screenshot
+- **FluxKontextImageScale node** - scales the image appropriately
+- **NIMFLUXNode** - performs the actual Flux Kontext inference using NIM
+- **SaveImage node** - saves the generated result
+
+### Memory Management
+The plugin provides memory management capabilities through ComfyUI's `/free` endpoint:
+- **Free memory** - instructs ComfyUI to free up system memory
+- **Unload models** - tells ComfyUI to unload models from VRAM to free up GPU memory
+- **Flexible control** - you can choose to free memory, unload models, or both
+- **Automatic defaults** - if no parameters are specified, both actions are performed by default
+
+This is particularly useful when:
+- Switching between different AI workloads
+- Freeing up VRAM for gaming or other GPU-intensive tasks
+- Managing memory usage during long ComfyUI sessions
+
+### Screenshot Processing
+The plugin automatically:
+- Finds your most recent screenshot from the configured `GALLERY_DIRECTORY`
+- Uploads the image to ComfyUI using the `/upload/image` endpoint
+- Modifies the workflow with your custom prompt and steps
+- Executes the workflow via ComfyUI's API
+- Retrieves the generated image via WebSocket
+- Saves the result to your `OUTPUT_DIRECTORY`
+
+### Configuration
+To use ComfyUI, add this to your `config.json`:
+```json
+{
+    "COMFYUI_URL": "http://localhost:8188"
+}
+```
+
+### Setup Requirements
+To use the ComfyUI features, you'll need:
+- ComfyUI installed and running locally (typically on `http://localhost:8188`)
+- NIM nodes installed in ComfyUI (Comfy-Org/NIMnodes)
+- Flux Kontext NIM model available
+- Proper configuration in your `config.json` file
+
+**Note**: The plugin now uses the `FLUX_KONTEXT_INFERENCE_BACKEND` configuration to explicitly choose which backend to use. You can have multiple backends configured, but only the one specified in `FLUX_KONTEXT_INFERENCE_BACKEND` will be used.
+
+### Example Commands
+- "hey flux, free comfyui memory" - frees both memory and unloads models (default behavior)
+- "hey flux, free comfyui memory with unload_models=false" - only frees memory, keeps models loaded
+- "hey flux, free comfyui memory with free_memory=false" - only unloads models, doesn't free memory
 
 ## Supported Commands
 
@@ -313,7 +387,12 @@ The Flux Plug-in for G-Assist supports the following commands:
 | `pause_invokeai_processor` | Pauses the InvokeAI processing queue | "hey flux, pause the invokeai processor" |
 | `resume_invokeai_processor` | Resumes the InvokeAI processing queue | "hey flux, resume the invokeai processor" |
 | `invokeai_empty_model_cache` | Empties the InvokeAI model cache to free VRAM | "hey flux, empty the invokeai model cache" |
-
+| `flux_kontext_nim_ready_check` | Tests health endpoints of the Flux Kontext NIM server | "hey flux, check if the flux kontext nim server is ready" |
+| `check_flux_kontext_nim_status` | Checks if the Flux Kontext NIM server is running | "hey flux, check if the flux kontext nim server is running" |
+| `stop_flux_kontext_nim` | Stops the Flux Kontext NIM server | "hey flux, stop the flux kontext nim server" |
+| `start_flux_kontext_nim` | Starts the Flux Kontext NIM server | "hey flux, start the flux kontext nim server" |
+| `comfyui_status` | Checks the status of the ComfyUI service | "hey flux, check comfyui status" |
+| `comfyui_free_memory` | Calls the ComfyUI /free endpoint to free memory and/or unload models | "hey flux, free comfyui memory" |
 
 ## Logging
 Your plugin automatically logs to `flux_plugin.log` in your user's profile directory. It tracks:

@@ -22,9 +22,15 @@ import subprocess
 import threading
 import requests
 import mimetypes
+import tempfile
 from ctypes import byref, windll, wintypes
 from PIL import Image
 import base64
+import websocket
+import uuid
+from datetime import datetime
+from ctypes import wintypes
+import urllib.parse
 
 # Data Types
 type Response = dict[str, any]
@@ -53,6 +59,8 @@ BUILD_NVIDIA_COM_FLUX_HOSTED_NIM = (
 FLUX_NIM_URL = None
 INVOKEAI_URL = "http://localhost:9090"
 FLUX_KONTEXT_NIM_URL = "http://localhost:8011"
+COMFYUI_URL = "http://localhost:8188"
+FLUX_KONTEXT_INFERENCE_BACKEND = "NIM"  # Default to NIM backend
 BOARD_ID = None
 
 
@@ -129,9 +137,11 @@ def prepare_image_for_kontext(
 
             # Crop to target dimensions (center crop)
             left = (new_width - target_width) // 2
+            left = max(0, left)  # Ensure left is not negative
             top = (new_height - target_height) // 2
-            right = left + target_width
-            bottom = top + target_height
+            top = max(0, top)  # Ensure top is not negative
+            right = min(new_width, left + target_width)
+            bottom = min(new_height, top + target_height)
 
             cropped_img = scaled_img.crop((left, top, right, bottom))
 
@@ -156,9 +166,70 @@ def prepare_image_for_kontext(
         return None
 
 
+def prepare_image_for_comfyui(
+    image_path: str, target_width: int = 1392, target_height: int = 752
+) -> str:
+    """
+    Scales and crops an image to the specified dimensions and saves it to a temporary file.
+    Returns the path to the temporary file for use with ComfyUI.
+
+    Args:
+        image_path (str): Path to the input image file
+        target_width (int): Target width (default: 1392)
+        target_height (int): Target height (default: 752)
+
+    Returns:
+        str: Path to the temporary resized image file, or None if failed
+    """
+    try:
+        # Open the image
+        with Image.open(image_path) as img:
+            # Convert to RGB if necessary
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+
+            # Calculate scaling to maintain aspect ratio
+            img_width, img_height = img.size
+            scale = max(target_width / img_width, target_height / img_height)
+
+            # Scale the image
+            new_width = int(img_width * scale)
+            new_height = int(img_height * scale)
+            scaled_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            # Crop to target dimensions (center crop)
+            left = (new_width - target_width) // 2
+            left = max(0, left)  # Ensure left is not negative
+            top = (new_height - target_height) // 2
+            top = max(0, top)  # Ensure top is not negative
+            right = min(new_width, left + target_width)
+            bottom = min(new_height, top + target_height)
+
+            cropped_img = scaled_img.crop((left, top, right, bottom))
+
+            # Create a temporary file
+            temp_file = tempfile.NamedTemporaryFile(
+                suffix=".png", prefix="comfyui_resized_", delete=False
+            )
+            temp_path = temp_file.name
+            temp_file.close()
+
+            # Save the resized image to the temporary file
+            cropped_img.save(temp_path, format="PNG")
+
+            logging.info(
+                f"Successfully prepared image {image_path} to {target_width}x{target_height} and saved to {temp_path}"
+            )
+            return temp_path
+
+    except Exception as e:
+        logging.error(f"Error preparing image {image_path} for ComfyUI: {e}")
+        return None
+
+
 def load_config():
     """Load configuration from config.json file"""
-    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_NIM_URL, INVOKEAI_URL, FLUX_KONTEXT_NIM_URL, BOARD_ID
+    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_NIM_URL, INVOKEAI_URL, FLUX_KONTEXT_NIM_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, BOARD_ID
     try:
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
@@ -172,6 +243,10 @@ def load_config():
             INVOKEAI_URL = config.get("INVOKEAI_URL", "http://localhost:9090")
             FLUX_KONTEXT_NIM_URL = config.get(
                 "FLUX_KONTEXT_NIM_URL", "http://localhost:8011"
+            )
+            COMFYUI_URL = config.get("COMFYUI_URL", "http://localhost:8188")
+            FLUX_KONTEXT_INFERENCE_BACKEND = config.get(
+                "FLUX_KONTEXT_INFERENCE_BACKEND", "NIM"
             )
             BOARD_ID = config.get("BOARD_ID", None)
             logging.info("Configuration loaded successfully")
@@ -223,6 +298,8 @@ def main():
         "check_flux_kontext_nim_status": check_flux_kontext_nim_status,
         "stop_flux_kontext_nim": stop_flux_kontext_nim,
         "start_flux_kontext_nim": start_flux_kontext_nim,
+        "comfyui_status": comfyui_status,
+        "comfyui_free_memory": comfyui_free_memory,
     }
     cmd = ""
 
@@ -401,11 +478,11 @@ def validate_output_directory():
     try:
         # Try to create the directory if it doesn't exist
         os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
-        
+
         # Test if we can write to the directory
         test_file = os.path.join(OUTPUT_DIRECTORY, ".test_write_permission")
         try:
-            with open(test_file, 'w') as f:
+            with open(test_file, "w") as f:
                 f.write("test")
             os.remove(test_file)  # Clean up test file
             logging.info(f"OUTPUT_DIRECTORY '{OUTPUT_DIRECTORY}' is valid and writable")
@@ -413,7 +490,7 @@ def validate_output_directory():
         except (OSError, PermissionError) as e:
             logging.error(f"OUTPUT_DIRECTORY '{OUTPUT_DIRECTORY}' is not writable: {e}")
             return False
-            
+
     except (OSError, PermissionError) as e:
         logging.error(f"Failed to create OUTPUT_DIRECTORY '{OUTPUT_DIRECTORY}': {e}")
         return False
@@ -431,20 +508,22 @@ def execute_initialize_command() -> dict:
         The function return value(s)
     """
     logging.info("Initializing plugin")
-    
+
     # Validate configuration
     validation_results = []
-    
+
     # Validate OUTPUT_DIRECTORY
     if not validate_output_directory():
         validation_results.append("OUTPUT_DIRECTORY configuration is invalid")
-    
+
     # Check other critical configurations
     if not GALLERY_DIRECTORY:
         validation_results.append("GALLERY_DIRECTORY not configured")
-    
+
     if validation_results:
-        warning_msg = f"Plugin initialized with warnings: {'; '.join(validation_results)}"
+        warning_msg = (
+            f"Plugin initialized with warnings: {'; '.join(validation_results)}"
+        )
         logging.warning(warning_msg)
         return generate_success_response(f"initialize success. {warning_msg}")
     else:
@@ -704,6 +783,9 @@ def start_nim(
         if check_result.get("success", False):
             return generate_failure_response("Flux NIM server is already running.")
 
+        # Get port from FLUX_NIM_URL
+        port = FLUX_NIM_URL.split(":")[-1]
+
         # Build the podman command
         logging.info("Starting Flux NIM server...")
         podman_cmd = [
@@ -722,7 +804,7 @@ def start_nim(
             "-e",
             f"HF_TOKEN={HF_TOKEN}",
             "-p",
-            "8000:8000",
+            f"{port}:8000",
             "-v",
             f"{LOCAL_NIM_CACHE}:/opt/nim/.cache/",
             "nvcr.io/nim/black-forest-labs/flux.1-dev:1.0.0",
@@ -823,13 +905,17 @@ def flux_kontext_nim_ready_check(
 
         # Step 3: Success response
         logging.info("Both health endpoints are working!")
-        final_response = generate_success_response("Flux Kontext NIM service is live and ready!")
+        final_response = generate_success_response(
+            "Flux Kontext NIM service is live and ready!"
+        )
         logging.info(f"Final response: {final_response}")
         return final_response
 
     except Exception as e:
         logging.error(f"Error in flux_kontext_nim_ready_check: {str(e)}")
-        return generate_failure_response(f"Error in flux_kontext_nim_ready_check: {str(e)}")
+        return generate_failure_response(
+            f"Error in flux_kontext_nim_ready_check: {str(e)}"
+        )
 
 
 def check_flux_kontext_nim_status(
@@ -850,8 +936,8 @@ def check_flux_kontext_nim_status(
     logging.info(f"Executing check_flux_kontext_nim_status with params: {params}")
 
     try:
-        # Check if flux-kontext-nim-server container is running using WSL and podman
-        logging.info("Checking if flux-kontext-nim-server container is running...")
+        # Check if FLUX_KONTEXT container is running using WSL and podman
+        logging.info("Checking if FLUX_KONTEXT container is running...")
         check_cmd = [
             "wsl",
             "-d",
@@ -859,7 +945,7 @@ def check_flux_kontext_nim_status(
             "podman",
             "ps",
             "--filter",
-            "name=flux-kontext-nim-server",
+            "name=FLUX_KONTEXT",
             "--format",
             "{{.Names}}",
         ]
@@ -876,21 +962,31 @@ def check_flux_kontext_nim_status(
                     f"Flux Kontext NIM server is running. Container: {container_names}"
                 )
             else:
-                return generate_failure_response("Flux Kontext NIM server is not running.")
+                return generate_failure_response(
+                    "Flux Kontext NIM server is not running."
+                )
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Error checking Flux Kontext NIM server status: {e}")
-            return generate_failure_response(f"Error checking Flux Kontext NIM server status: {e}")
+            return generate_failure_response(
+                f"Error checking Flux Kontext NIM server status: {e}"
+            )
         except FileNotFoundError:
             logging.error("WSL or podman command not found")
             return generate_failure_response("WSL or podman command not found")
         except Exception as e:
-            logging.error(f"Unexpected error checking Flux Kontext NIM server status: {e}")
-            return generate_failure_response(f"Error checking Flux Kontext NIM server status: {e}")
+            logging.error(
+                f"Unexpected error checking Flux Kontext NIM server status: {e}"
+            )
+            return generate_failure_response(
+                f"Error checking Flux Kontext NIM server status: {e}"
+            )
 
     except Exception as e:
         logging.error(f"Error in check_flux_kontext_nim_status: {str(e)}")
-        return generate_failure_response(f"Error in check_flux_kontext_nim_status: {str(e)}")
+        return generate_failure_response(
+            f"Error in check_flux_kontext_nim_status: {str(e)}"
+        )
 
 
 def stop_flux_kontext_nim(
@@ -911,27 +1007,42 @@ def stop_flux_kontext_nim(
     logging.info(f"Executing stop_flux_kontext_nim with params: {params}")
 
     try:
-        # Stop the flux-kontext-nim-server container using WSL and podman
-        logging.info("Stopping flux-kontext-nim-server container...")
-        stop_cmd = ["wsl", "-d", "NVIDIA-Workbench", "podman", "kill", "flux-kontext-nim-server"]
+        # Stop the FLUX_KONTEXT container using WSL and podman
+        logging.info("Stopping FLUX_KONTEXT container...")
+        stop_cmd = [
+            "wsl",
+            "-d",
+            "NVIDIA-Workbench",
+            "podman",
+            "kill",
+            "FLUX_KONTEXT",
+        ]
 
         try:
             result = subprocess.run(
                 stop_cmd, check=True, capture_output=True, text=True
             )
-            logging.info(f"Flux Kontext NIM server stop result: {result.stdout.strip()}")
+            logging.info(
+                f"Flux Kontext NIM server stop result: {result.stdout.strip()}"
+            )
 
-            return generate_success_response("Flux Kontext NIM server stopped successfully.")
+            return generate_success_response(
+                "Flux Kontext NIM server stopped successfully."
+            )
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Error stopping Flux Kontext NIM server: {e}")
-            return generate_failure_response(f"Error stopping Flux Kontext NIM server: {e}")
+            return generate_failure_response(
+                f"Error stopping Flux Kontext NIM server: {e}"
+            )
         except FileNotFoundError:
             logging.error("WSL or podman command not found")
             return generate_failure_response("WSL or podman command not found")
         except Exception as e:
             logging.error(f"Unexpected error stopping Flux Kontext NIM server: {e}")
-            return generate_failure_response(f"Error stopping Flux Kontext NIM server: {e}")
+            return generate_failure_response(
+                f"Error stopping Flux Kontext NIM server: {e}"
+            )
 
     except Exception as e:
         logging.error(f"Error in stop_flux_kontext_nim: {str(e)}")
@@ -960,7 +1071,7 @@ def start_flux_kontext_nim(
         load_config()
 
         # Check configuration requirements
-        global NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE
+        global NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, FLUX_KONTEXT_NIM_URL
         if not NGC_API_KEY or NGC_API_KEY == "YOUR_NGC_API_KEY_HERE":
             return generate_failure_response(
                 "NGC API key not configured. Please set NGC_API_KEY in config.json"
@@ -980,7 +1091,12 @@ def start_flux_kontext_nim(
         logging.info("Checking if Flux Kontext NIM server is already running...")
         check_result = check_flux_kontext_nim_status()
         if check_result.get("success", False):
-            return generate_failure_response("Flux Kontext NIM server is already running.")
+            return generate_failure_response(
+                "Flux Kontext NIM server is already running."
+            )
+
+        # Get port from FLUX_KONTEXT_NIM_URL
+        port = FLUX_KONTEXT_NIM_URL.split(":")[-1]
 
         # Build the podman command
         logging.info("Starting Flux Kontext NIM server...")
@@ -992,7 +1108,7 @@ def start_flux_kontext_nim(
             "run",
             "-d",
             "--rm",
-            "--name=flux-kontext-nim-server",
+            "--name=FLUX_KONTEXT",
             "--device",
             "nvidia.com/gpu=all",
             "-e",
@@ -1000,7 +1116,7 @@ def start_flux_kontext_nim(
             "-e",
             f"HF_TOKEN={HF_TOKEN}",
             "-p",
-            "8011:8000",
+            f"{port}:8000",
             "-v",
             f"{LOCAL_NIM_CACHE}:/opt/nim/.cache/",
             "nvcr.io/nim/black-forest-labs/flux.1-kontext-dev:latest",
@@ -1011,19 +1127,27 @@ def start_flux_kontext_nim(
             result = subprocess.run(
                 podman_cmd, check=True, capture_output=True, text=True
             )
-            logging.info(f"Flux Kontext NIM server start result: {result.stdout.strip()}")
+            logging.info(
+                f"Flux Kontext NIM server start result: {result.stdout.strip()}"
+            )
 
-            return generate_success_response("Flux Kontext NIM server started successfully.")
+            return generate_success_response(
+                "Flux Kontext NIM server started successfully."
+            )
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Error starting Flux Kontext NIM server: {e}")
-            return generate_failure_response(f"Error starting Flux Kontext NIM server: {e}")
+            return generate_failure_response(
+                f"Error starting Flux Kontext NIM server: {e}"
+            )
         except FileNotFoundError:
             logging.error("WSL or podman command not found")
             return generate_failure_response("WSL or podman command not found")
         except Exception as e:
             logging.error(f"Unexpected error starting Flux Kontext NIM server: {e}")
-            return generate_failure_response(f"Error starting Flux Kontext NIM server: {e}")
+            return generate_failure_response(
+                f"Error starting Flux Kontext NIM server: {e}"
+            )
 
     except Exception as e:
         logging.error(f"Error in start_flux_kontext_nim: {str(e)}")
@@ -1673,7 +1797,11 @@ def submit_workflow_to_invokeai(workflow_data, invokeai_url):
 
 
 def generate_image_using_kontext_worker(
-    GALLERY_DIRECTORY: str, invokeai_url: str, board_id: str = None, prompt: str = None, steps: int = 30
+    GALLERY_DIRECTORY: str,
+    invokeai_url: str,
+    board_id: str = None,
+    prompt: str = None,
+    steps: int = 30,
 ):
     """Background worker function to upload screenshot and process with InvokeAI"""
     try:
@@ -1737,7 +1865,10 @@ def generate_image_using_kontext_worker(
 
 
 def generate_image_using_kontext_nim_worker(
-    gallery_directory: str, flux_kontext_nim_url: str, prompt: str = None, steps: int = 30
+    gallery_directory: str,
+    flux_kontext_nim_url: str,
+    prompt: str = None,
+    steps: int = 30,
 ):
     """Background worker function to process screenshot with Flux Kontext NIM"""
     try:
@@ -1801,14 +1932,18 @@ def generate_image_using_kontext_nim_worker(
         headers = {"accept": "application/json", "content-type": "application/json"}
 
         logging.info(f"Sending request to Flux Kontext NIM: {flux_kontext_nim_url}")
-        
+
         # Create a truncated payload for logging (base64 data is very long)
         log_payload = payload.copy()
-        if 'image' in log_payload and log_payload['image'].startswith('data:image/png;base64,'):
-            base64_data = log_payload['image']
-            truncated = base64_data[:50] + '...' + base64_data[-20:]  # Show first 50 and last 20 chars
-            log_payload['image'] = truncated
-        
+        if "image" in log_payload and log_payload["image"].startswith(
+            "data:image/png;base64,"
+        ):
+            base64_data = log_payload["image"]
+            truncated = (
+                base64_data[:50] + "..." + base64_data[-20:]
+            )  # Show first 50 and last 20 chars
+            log_payload["image"] = truncated
+
         logging.info(f"Payload: {log_payload}")
 
         # Construct the inference endpoint URL
@@ -1866,7 +2001,9 @@ def generate_image_using_kontext_nim_worker(
         # Log the full error response to see what the server is complaining about
         try:
             error_response = e.response.json()
-            logging.error(f"Error response from server: {json.dumps(error_response, indent=2)}")
+            logging.error(
+                f"Error response from server: {json.dumps(error_response, indent=2)}"
+            )
         except json.JSONDecodeError:
             logging.error(f"Error response text: {e.response.text}")
         logging.error(f"Request URL: {e.request.url}")
@@ -1900,7 +2037,7 @@ def generate_image_using_kontext(
         load_config()
 
         # Check if GALLERY_DIRECTORY is configured
-        global GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, INVOKEAI_URL, BOARD_ID
+        global GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, INVOKEAI_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, BOARD_ID
         if not GALLERY_DIRECTORY:
             return generate_failure_response(
                 "GALLERY_DIRECTORY not configured. Please set GALLERY_DIRECTORY in config.json"
@@ -1914,12 +2051,22 @@ def generate_image_using_kontext(
         try:
             steps = int(steps)
             if steps < 20 or steps > 50:
-                return generate_failure_response("Steps parameter must be between 20 and 50")
+                return generate_failure_response(
+                    "Steps parameter must be between 20 and 50"
+                )
         except (ValueError, TypeError):
             return generate_failure_response("Steps parameter must be an integer")
 
-        # Determine which backend to use based on configuration
-        if FLUX_KONTEXT_NIM_URL:
+        # Determine which backend to use based on FLUX_KONTEXT_INFERENCE_BACKEND configuration
+        backend = FLUX_KONTEXT_INFERENCE_BACKEND.upper()
+
+        # Validate that the chosen backend has a valid URL configuration
+        if backend == "NIM":
+            if not FLUX_KONTEXT_NIM_URL:
+                return generate_failure_response(
+                    f"FLUX_KONTEXT_INFERENCE_BACKEND is set to 'NIM' but FLUX_KONTEXT_NIM_URL is not configured. Please set FLUX_KONTEXT_NIM_URL in config.json"
+                )
+
             # Use Flux Kontext NIM backend
             logging.info(f"Using Flux Kontext NIM backend at: {FLUX_KONTEXT_NIM_URL}")
 
@@ -1946,7 +2093,12 @@ def generate_image_using_kontext(
                     f"Your Flux Kontext NIM generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}"
                 )
 
-        elif INVOKEAI_URL:
+        elif backend == "INVOKEAI":
+            if not INVOKEAI_URL:
+                return generate_failure_response(
+                    f"FLUX_KONTEXT_INFERENCE_BACKEND is set to 'INVOKEAI' but INVOKEAI_URL is not configured. Please set INVOKEAI_URL in config.json"
+                )
+
             # Use InvokeAI backend
             logging.info(f"Using InvokeAI backend at: {INVOKEAI_URL}")
 
@@ -1972,10 +2124,43 @@ def generate_image_using_kontext(
                 return generate_success_response(
                     f"Your InvokeAI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}"
                 )
+
+        elif backend == "COMFYUI":
+            if not COMFYUI_URL:
+                return generate_failure_response(
+                    f"FLUX_KONTEXT_INFERENCE_BACKEND is set to 'COMFYUI' but COMFYUI_URL is not configured. Please set COMFYUI_URL in config.json"
+                )
+
+            # Use ComfyUI backend
+            logging.info(f"Using ComfyUI backend at: {COMFYUI_URL}")
+
+            # Start ComfyUI generation in background thread
+            thread = threading.Thread(
+                target=generate_image_using_comfyui_worker,
+                args=(GALLERY_DIRECTORY, COMFYUI_URL, prompt, steps),
+                daemon=True,
+            )
+            thread.start()
+
+            if prompt:
+                logging.info(
+                    f"Started background ComfyUI Flux Kontext generation thread with prompt: {prompt}"
+                )
+                return generate_success_response(
+                    f'Your ComfyUI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY} with prompt: "{prompt}"'
+                )
+            else:
+                logging.info(
+                    f"Started background ComfyUI Flux Kontext generation thread with default prompt"
+                )
+                return generate_success_response(
+                    f"Your ComfyUI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}"
+                )
+
         else:
-            # Neither backend is configured
+            # Invalid backend configuration
             return generate_failure_response(
-                "Neither FLUX_KONTEXT_NIM_URL nor INVOKEAI_URL is configured. Please set at least one in config.json"
+                f"Invalid FLUX_KONTEXT_INFERENCE_BACKEND value: '{FLUX_KONTEXT_INFERENCE_BACKEND}'. Must be one of: NIM, INVOKEAI, COMFYUI"
             )
 
     except Exception as e:
@@ -2236,6 +2421,897 @@ def invokeai_empty_model_cache(
         return generate_failure_response(error_msg)
     except Exception as e:
         error_msg = f"Unexpected error emptying InvokeAI model cache: {str(e)}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+
+
+COMFYUI_FLUX_KONTEXT_WORKFLOW = {
+    "1": {
+        "inputs": {"filename_prefix": "ComfyUI", "images": ["21", 0]},
+        "class_type": "SaveImage",
+        "_meta": {"title": "Save Image"},
+    },
+    "4": {
+        "inputs": {},
+        "class_type": "InstallNIMNode",
+        "_meta": {"title": "Install NIM"},
+    },
+    "6": {
+        "inputs": {
+            "model_type": "FLUX_KONTEXT",
+            "operation": "Start",
+            "offloading_policy": "Default",
+            "hf_token": ["8", 0],
+            "is_nim_installed": ["4", 0],
+        },
+        "class_type": "LoadNIMNode",
+        "_meta": {"title": "Load NIM"},
+    },
+    "8": {
+        "inputs": {},
+        "class_type": "Get_HFToken",
+        "_meta": {"title": "Use HF_TOKEN EnVar"},
+    },
+    "11": {
+        "inputs": {"image": "552ed252-7ea7-495f-98e6-2d11c992c8ac.png"},
+        "class_type": "LoadImage",
+        "_meta": {"title": "Load Image"},
+    },
+    "16": {
+        "inputs": {"image": ["11", 0]},
+        "class_type": "FluxKontextImageScale",
+        "_meta": {"title": "FluxKontextImageScale"},
+    },
+    "21": {
+        "inputs": {
+            "width": ["22", 0],
+            "height": ["22", 1],
+            "prompt": "make into into fine Chinese porcelain blue and white",
+            "cfg_scale": 2.5,
+            "seed": 738487792,
+            "steps": 20,
+            "is_nim_started": ["6", 0],
+            "image": ["16", 0],
+        },
+        "class_type": "NIMFLUXNode",
+        "_meta": {"title": "NIM Generate"},
+    },
+    "22": {
+        "inputs": {"image": ["16", 0]},
+        "class_type": "GetImageSize",
+        "_meta": {"title": "Get Image Size"},
+    },
+}
+
+
+def generate_image_using_comfyui_worker(
+    gallery_directory: str,
+    comfyui_url: str,
+    prompt: str = None,
+    steps: int = 30,
+    workflow: str = COMFYUI_FLUX_KONTEXT_WORKFLOW,
+):
+    """Background worker function to process screenshot with ComfyUI Flux Kontext workflow"""
+    try:
+        logging.info(
+            f"Starting background image generation using ComfyUI from directory: {gallery_directory}"
+        )
+
+        # Ensure output directory exists
+        global OUTPUT_DIRECTORY
+        try:
+            os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+            logging.info(f"Output directory: {OUTPUT_DIRECTORY}")
+        except (OSError, PermissionError) as e:
+            error_msg = f"Failed to create output directory '{OUTPUT_DIRECTORY}': {e}. Please check the path and permissions."
+            logging.error(error_msg)
+            return
+
+        # Use default prompt if none provided
+        if not prompt:
+            prompt = "make it in the style of studio ghibli anime"
+            logging.info(f"No prompt provided, using default: {prompt}")
+        else:
+            logging.info(f"Using provided prompt: {prompt}")
+
+        # Look for common screenshot file extensions
+        screenshot_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
+
+        # Find the most recent screenshot recursively
+        latest_screenshot_path = find_most_recent_image(
+            gallery_directory, screenshot_extensions
+        )
+
+        if not latest_screenshot_path:
+            logging.error(
+                f"No screenshot files found in directory or subdirectories: {gallery_directory}"
+            )
+            return
+
+        logging.info(f"Using most recent screenshot: {latest_screenshot_path}")
+
+        # Step 1: Prepare the image (scale/crop to 1392x752 and save to temporary file)
+        resized_image_path = prepare_image_for_comfyui(latest_screenshot_path)
+
+        if not resized_image_path:
+            logging.error("Failed to prepare image for ComfyUI Flux Kontext")
+            return
+
+        logging.info("Successfully prepared image for ComfyUI Flux Kontext")
+
+        # Step 2: Upload the resized image to ComfyUI
+        image_name = upload_image_to_comfyui(resized_image_path, comfyui_url)
+
+        if not image_name:
+            logging.error("Failed to upload image to ComfyUI")
+            return
+
+        logging.info(f"Successfully uploaded image to ComfyUI with name: {image_name}")
+
+        # Step 3: Modify the workflow with the prompt, image name, and steps
+        modified_workflow = modify_comfyui_workflow_for_kontext(
+            COMFYUI_FLUX_KONTEXT_WORKFLOW, prompt, image_name, steps
+        )
+
+        if not modified_workflow:
+            logging.error("Failed to modify ComfyUI workflow")
+            return
+
+        # Step 4: Execute the workflow via ComfyUI API
+        logging.info("Executing ComfyUI workflow...")
+        output_images = execute_comfyui_workflow(modified_workflow, comfyui_url)
+
+        if output_images:
+            logging.info("Successfully executed ComfyUI Flux Kontext workflow")
+
+            # Save the output image
+            for node_id, images in output_images.items():
+                for i, image_data in enumerate(images):
+                    # Create output filename with timestamp
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"comfyui_flux_kontext_{timestamp}_{i}.png"
+                    file_path = os.path.join(OUTPUT_DIRECTORY, filename)
+
+                    # Save the image
+                    with open(file_path, "wb") as f:
+                        f.write(image_data)
+
+                    logging.info(f"Image saved successfully: {file_path}")
+
+                    # Set the image as desktop background
+                    if set_desktop_background(file_path):
+                        logging.info(
+                            f"Successfully set {file_path} as desktop background"
+                        )
+                    else:
+                        logging.warning(
+                            f"Failed to set {file_path} as desktop background"
+                        )
+        else:
+            logging.error("Failed to execute ComfyUI workflow")
+
+    except requests.exceptions.ConnectionError as e:
+        logging.error(f"Could not connect to ComfyUI server at {comfyui_url}: {e}")
+    except requests.exceptions.Timeout:
+        logging.error("Request to ComfyUI server timed out after 5 minutes")
+    except requests.exceptions.HTTPError as e:
+        logging.error(
+            f"ComfyUI API request failed with status code {e.response.status_code}"
+        )
+        # Log the full error response to see what the server is complaining about
+        try:
+            error_response = e.response.json()
+            logging.error(
+                f"Error response from server: {json.dumps(error_response, indent=2)}"
+            )
+        except json.JSONDecodeError:
+            logging.error(f"Error response text: {e.response.text}")
+        logging.error(f"Request URL: {e.request.url}")
+        logging.error(f"Request headers: {dict(e.request.headers)}")
+    except json.JSONDecodeError as e:
+        logging.error(f"Error parsing ComfyUI response: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error during ComfyUI generation: {e}")
+    finally:
+        # Clean up temporary files
+        if "resized_image_path" in locals() and os.path.exists(resized_image_path):
+            try:
+                os.unlink(resized_image_path)
+                logging.info(f"Cleaned up temporary file: {resized_image_path}")
+            except Exception as e:
+                logging.warning(
+                    f"Failed to clean up temporary file {resized_image_path}: {e}"
+                )
+
+
+def upload_image_to_comfyui(image_path: str, comfyui_url: str):
+    """
+    Uploads an image to ComfyUI and returns the image name.
+
+    Args:
+        image_path (str): Path to the image file
+        comfyui_url (str): Base URL for ComfyUI
+
+    Returns:
+        str: The image name returned by ComfyUI, or None if upload failed
+    """
+    upload_url = f"{comfyui_url}/upload/image"
+
+    try:
+        # Get the MIME type of the image
+        mime_type, _ = mimetypes.guess_type(image_path)
+        if mime_type is None:
+            mime_type = "image/png"  # Default to PNG if guess fails
+
+        # Prepare the file for upload
+        with open(image_path, "rb") as f:
+            files = {
+                "image": (os.path.basename(image_path), f, mime_type),
+            }
+
+            # Make the request
+            response = requests.post(
+                upload_url,
+                files=files,
+                headers={"accept": "application/json"},
+            )
+
+            response.raise_for_status()
+            result = response.json()
+            return result.get("name")
+
+    except Exception as e:
+        logging.error(f"Error uploading image to ComfyUI: {e}")
+        return None
+
+
+def modify_comfyui_workflow_for_kontext(workflow_data, prompt, image_name, steps):
+    """
+    Modifies the ComfyUI workflow data with the provided prompt, image name, and steps.
+
+    Args:
+        workflow_data (dict): The workflow dictionary to modify
+        prompt (str): The prompt to use for generation
+        image_name (str): The name of the uploaded image
+        steps (int): Number of inference steps
+
+    Returns:
+        dict: The modified workflow data
+    """
+    try:
+        # Create a deep copy of the workflow to avoid modifying the original
+        import copy
+
+        modified_workflow = copy.deepcopy(workflow_data)
+
+        # Debug: Log the workflow structure
+        logging.info(f"Workflow has {len(modified_workflow)} nodes")
+
+        # Log all available node IDs and class_types for debugging
+        node_ids = list(modified_workflow.keys())
+        node_types = [
+            modified_workflow[node_id].get("class_type") for node_id in node_ids
+        ]
+        logging.info(f"Available node IDs: {node_ids}")
+        logging.info(f"Available node class_types: {node_types}")
+
+        # Find the NIMFLUXNode and LoadImage nodes by class_type
+        nimflux_node_id = None
+        loadimage_node_id = None
+
+        for node_id, node_data in modified_workflow.items():
+            if node_data.get("class_type") == "NIMFLUXNode":
+                nimflux_node_id = node_id
+                logging.info(f"Found NIMFLUXNode with ID: {node_id}")
+            elif node_data.get("class_type") == "LoadImage":
+                loadimage_node_id = node_id
+                logging.info(f"Found LoadImage node with ID: {node_id}")
+
+        if not nimflux_node_id:
+            logging.error("NIMFLUXNode not found in workflow")
+            return None
+
+        if not loadimage_node_id:
+            logging.error("LoadImage node not found in workflow")
+            return None
+
+        # Get the node data
+        nimflux_node = modified_workflow[nimflux_node_id]
+        loadimage_node = modified_workflow[loadimage_node_id]
+
+        # Check if NIMFLUXNode has the expected structure
+        if "inputs" not in nimflux_node:
+            logging.error("NIMFLUXNode missing inputs")
+            return None
+
+        # Update the prompt in the NIMFLUXNode
+        if "prompt" in nimflux_node["inputs"]:
+            nimflux_node["inputs"]["prompt"] = prompt
+            logging.info(f"Updated prompt to: {prompt}")
+        else:
+            logging.error("NIMFLUXNode missing prompt in inputs")
+            return None
+
+        # Update the steps in the NIMFLUXNode
+        if "steps" in nimflux_node["inputs"]:
+            nimflux_node["inputs"]["steps"] = steps
+            logging.info(f"Updated steps to: {steps}")
+        else:
+            logging.error("NIMFLUXNode missing steps in inputs")
+            return None
+
+        # Update the image filename in the LoadImage node
+        if "image" in loadimage_node["inputs"]:
+            loadimage_node["inputs"]["image"] = image_name
+            logging.info(f"Updated image filename to: {image_name}")
+        else:
+            logging.error("LoadImage node missing image in inputs")
+            return None
+
+        return modified_workflow
+
+    except Exception as e:
+        logging.error(f"Error modifying ComfyUI workflow: {e}")
+        logging.error(f"Exception type: {type(e).__name__}")
+        import traceback
+
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        return None
+
+
+def execute_comfyui_workflow(workflow_data, comfyui_url):
+    """
+    Executes the ComfyUI workflow via the API and returns the output images.
+
+    Args:
+        workflow_data (dict): The workflow data to execute
+        comfyui_url (str): The base URL for ComfyUI
+
+    Returns:
+        dict: Dictionary of output images by node ID, or None on failure
+    """
+
+    try:
+        # Generate a unique client ID
+        client_id = str(uuid.uuid4())
+
+        # Queue the prompt
+        queue_url = f"{comfyui_url}/prompt"
+        payload = {"prompt": workflow_data, "client_id": client_id}
+
+        logging.info(f"Queueing ComfyUI workflow at {queue_url}...")
+
+        response = requests.post(
+            queue_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=60,
+        )
+
+        response.raise_for_status()
+        result = response.json()
+        logging.debug(f"ComfyUI API response: {result}")
+
+        prompt_id = result.get("prompt_id")
+
+        if not prompt_id:
+            logging.error("No prompt ID returned from ComfyUI")
+            logging.error(f"Full response: {result}")
+            return None
+
+        logging.info(f"ComfyUI workflow queued with prompt ID: {prompt_id}")
+
+        # Connect to WebSocket to receive execution updates and images
+        ws_url = f"ws://{comfyui_url.replace('http://', '').replace('https://', '')}/ws?clientId={client_id}"
+        logging.info(f"Connecting to ComfyUI WebSocket: {ws_url}")
+
+        # Check workflow status before connecting to WebSocket
+        try:
+            status_url = f"{comfyui_url}/prompt"
+            status_response = requests.get(status_url, timeout=10)
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                logging.info(f"ComfyUI status: {status_data}")
+
+                # Check if our prompt is in the queue or executing
+                if "queue_running" in status_data:
+                    queue_info = status_data["queue_running"]
+                    if (
+                        queue_info
+                        and "prompt_id" in queue_info
+                        and queue_info["prompt_id"] == prompt_id
+                    ):
+                        logging.info("Our workflow is currently executing")
+                    else:
+                        logging.info("Workflow is in queue or not found")
+            else:
+                logging.warning(
+                    f"Failed to get ComfyUI status: {status_response.status_code}"
+                )
+        except Exception as e:
+            logging.warning(f"Error checking ComfyUI status: {e}")
+
+        ws = websocket.WebSocket()
+        ws.settimeout(5)  # 5 second timeout for receive operations
+        ws.connect(ws_url)
+
+        output_images = {}
+        workflow_completed = False
+        start_time = datetime.now()
+        timeout_seconds = 300  # 5 minutes timeout
+
+        try:
+            while not workflow_completed:
+                # Check for timeout
+                if (datetime.now() - start_time).total_seconds() > timeout_seconds:
+                    logging.warning(
+                        "WebSocket timeout reached, stopping workflow monitoring"
+                    )
+                    break
+
+                try:
+                    # Receive message with a reasonable timeout
+                    out = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    # This is normal - just continue waiting
+                    continue
+                except Exception as e:
+                    logging.warning(f"WebSocket receive error: {e}")
+                    continue
+
+                if isinstance(out, str):
+                    try:
+                        message = json.loads(out)
+                        logging.debug(f"Received WebSocket message: {message}")
+
+                        if message["type"] == "executing":
+                            data = message["data"]
+                            if "prompt_id" in data and data["prompt_id"] == prompt_id:
+                                if data["node"] is None:
+                                    logging.info("ComfyUI workflow execution completed")
+                                    workflow_completed = True
+                                    break
+                                else:
+                                    logging.info(
+                                        f"ComfyUI executing node: {data['node']}"
+                                    )
+
+                        elif message["type"] == "executed":
+                            data = message["data"]
+                            if "node" in data:
+                                node_id = data["node"]
+                                logging.info(f"Node {node_id} completed")
+
+                                # Check if this is the SaveImage node and it has output
+                                if (
+                                    node_id == "1"
+                                    and "output" in data
+                                    and "images" in data["output"]
+                                ):
+                                    logging.info(
+                                        f"SaveImage node completed with {len(data['output']['images'])} images"
+                                    )
+                                    workflow_completed = True
+                                    break
+
+                        elif message["type"] == "progress":
+                            # Just log progress, don't need to do anything special
+                            pass
+
+                    except json.JSONDecodeError as e:
+                        logging.warning(f"Failed to parse WebSocket message: {e}")
+                        continue
+
+                else:
+                    # Binary data - this should be an image
+                    logging.info(f"Received binary data of length {len(out)} bytes")
+
+                    # Store the image data
+                    if "1" not in output_images:
+                        output_images["1"] = []
+                    output_images["1"].append(out)
+                    logging.info(
+                        f"Stored image, total images: {len(output_images['1'])}"
+                    )
+
+        finally:
+            ws.close()
+
+        # Log what we got from WebSocket
+        logging.info(
+            f"WebSocket monitoring completed. Workflow completed: {workflow_completed}"
+        )
+        logging.info(
+            f"Images received via WebSocket: {len(output_images.get('1', [])) if '1' in output_images else 0}"
+        )
+
+        # If we didn't get images via WebSocket, try the history API as a fallback
+        if not output_images:
+            logging.info(
+                "No images received via WebSocket, checking ComfyUI history..."
+            )
+            try:
+                history_url = f"{comfyui_url}/history"
+                response = requests.get(history_url, timeout=30)
+                if response.status_code == 200:
+                    history = response.json()
+
+                    if prompt_id in history:
+                        workflow_history = history[prompt_id]
+                        logging.info(f"Found workflow history for prompt {prompt_id}")
+
+                        # Check if SaveImage node has output
+                        if "1" in workflow_history.get("outputs", {}):
+                            save_image_output = workflow_history["outputs"]["1"]
+                            if "images" in save_image_output:
+                                images = save_image_output["images"]
+                                logging.info(
+                                    f"Found {len(images)} images in SaveImage output"
+                                )
+
+                                # Download the images
+                                if "1" not in output_images:
+                                    output_images["1"] = []
+
+                                for i, image_info in enumerate(images):
+                                    image_url = f"{comfyui_url}/view?filename={image_info['filename']}&type=output&subfolder={image_info.get('subfolder', '')}"
+                                    logging.info(
+                                        f"Downloading image {i+1} from: {image_url}"
+                                    )
+
+                                    img_response = requests.get(image_url, timeout=30)
+                                    if img_response.status_code == 200:
+                                        output_images["1"].append(img_response.content)
+                                        logging.info(
+                                            f"Successfully downloaded image {i+1}"
+                                        )
+                                    else:
+                                        logging.warning(
+                                            f"Failed to download image {i+1}: {img_response.status_code}"
+                                        )
+                else:
+                    logging.warning(
+                        f"Failed to get ComfyUI history: {response.status_code}"
+                    )
+            except Exception as e:
+                logging.warning(f"Error checking ComfyUI history: {e}")
+
+        if output_images:
+            total_images = sum(len(images) for images in output_images.values())
+            logging.info(f"Successfully received {total_images} total output images")
+            return output_images
+        else:
+            logging.warning("No output images received from ComfyUI workflow")
+            return None
+
+    except websocket.WebSocketException as e:
+        logging.error(f"WebSocket error during ComfyUI workflow execution: {e}")
+        return None
+    except requests.exceptions.ConnectionError as e:
+        logging.error(f"Could not connect to the ComfyUI server at {comfyui_url}")
+        logging.error(f"Details: {e}")
+        return None
+    except requests.exceptions.Timeout:
+        logging.error("The request to the ComfyUI server timed out after 60 seconds")
+        return None
+    except requests.exceptions.HTTPError as e:
+        logging.error(
+            f"ComfyUI API request failed with status code {e.response.status_code}"
+        )
+        logging.error(f"URL: {e.request.url}")
+        try:
+            error_json = e.response.json()
+            logging.error(f"Error Response: {json.dumps(error_json, indent=2)}")
+        except json.JSONDecodeError:
+            logging.error(f"Error Response: {e.response.text}")
+        return None
+    except Exception as e:
+        logging.error(
+            f"An unexpected error occurred during ComfyUI workflow execution: {e}"
+        )
+        return None
+
+
+def comfyui_status(
+    params: dict = None, context: dict = None, system_info: dict = None
+) -> dict:
+    """Command handler for `comfyui_status` function
+
+    Checks the status of the ComfyUI service by calling the root endpoint.
+
+    Args:
+        params: Function parameters (not used)
+        context: Context information (not used)
+        system_info: System information (not used)
+
+    Returns:
+        The function return value with ComfyUI status information
+    """
+    logging.info("Executing comfyui_status")
+
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+
+        global COMFYUI_URL
+
+        if not COMFYUI_URL:
+            return generate_failure_response(
+                "COMFYUI_URL not configured. Please set COMFYUI_URL in config.json"
+            )
+
+        # Try to hit the root endpoint to check if ComfyUI is responding
+        logging.info(f"Checking ComfyUI status at: {COMFYUI_URL}")
+
+        # Make a simple GET request to the root endpoint
+        response = requests.get(COMFYUI_URL, timeout=10)
+
+        # Check for HTTP errors
+        response.raise_for_status()
+
+        # If we get here, ComfyUI is responding
+        logging.info("ComfyUI service is responding")
+
+        # Try to get some basic system information if available
+        try:
+            # Check if there's a system stats endpoint (some ComfyUI versions have this)
+            system_stats_url = f"{COMFYUI_URL}/system_stats"
+            stats_response = requests.get(system_stats_url, timeout=5)
+
+            if stats_response.status_code == 200:
+                stats_data = stats_response.json()
+
+                # Parse the actual ComfyUI system stats structure
+                system_info = stats_data.get("system", {})
+                devices = stats_data.get("devices", [])
+
+                message = f"ComfyUI service is running and responding.\n"
+
+                # Add RAM information if available
+                if "ram_total" in system_info and "ram_free" in system_info:
+                    ram_total = system_info["ram_total"]
+                    ram_free = system_info["ram_free"]
+                    ram_used = ram_total - ram_free
+
+                    # Convert to human-readable units
+                    if ram_total >= 1024**3:  # >= 1 GB
+                        ram_used_gb = ram_used / (1024**3)
+                        ram_total_gb = ram_total / (1024**3)
+                        message += f"RAM: {ram_used_gb:.1f} / {ram_total_gb:.1f} GB\n"
+                    else:  # < 1 GB, show in MB
+                        ram_used_mb = ram_used / (1024**2)
+                        ram_total_mb = ram_total / (1024**2)
+                        message += f"RAM: {ram_used_mb:.1f} / {ram_total_mb:.1f} MB\n"
+
+                # Add VRAM information if available (from first device)
+                if devices and len(devices) > 0:
+                    device = devices[0]
+
+                    # Debug logging to see what fields are available
+                    logging.info(f"Available device fields: {list(device.keys())}")
+                    logging.info(f"Device data: {device}")
+
+                    # Handle different possible VRAM field names and structures
+                    # Try multiple approaches to get accurate VRAM information
+                    vram_total = None
+                    vram_free = None
+
+                    # Strategy 1: Try torch_vram fields first (most accurate for system memory)
+                    if "torch_vram_total" in device and device["torch_vram_total"] > 0:
+                        vram_total = device["torch_vram_total"]
+                        logging.info(f"Using torch_vram_total: {vram_total}")
+                    elif "vram_total" in device and device["vram_total"] > 0:
+                        vram_total = device["vram_total"]
+                        logging.info(f"Using vram_total: {vram_total}")
+
+                    # Strategy 2: Try torch_vram_free first, then vram_free
+                    if "torch_vram_free" in device and device["torch_vram_free"] > 0:
+                        vram_free = device["torch_vram_free"]
+                        logging.info(f"Using torch_vram_free: {vram_free}")
+                    elif "vram_free" in device and device["vram_free"] > 0:
+                        vram_free = device["vram_free"]
+                        logging.info(f"Using vram_free: {vram_free}")
+
+                    # Strategy 3: If we still don't have valid values, try alternative field names
+                    if vram_total is None or vram_total <= 0:
+                        for field in ["total", "gpu_memory_total", "memory_total"]:
+                            if field in device and device[field] > 0:
+                                vram_total = device[field]
+                                logging.info(
+                                    f"Using alternative total field '{field}': {vram_total}"
+                                )
+                                break
+
+                    if vram_free is None or vram_free <= 0:
+                        for field in [
+                            "free",
+                            "gpu_memory_free",
+                            "memory_free",
+                            "available",
+                        ]:
+                            if field in device and device[field] > 0:
+                                vram_free = device[field]
+                                logging.info(
+                                    f"Using alternative free field '{field}': {vram_free}"
+                                )
+                                break
+
+                    # Calculate VRAM usage based on available information
+                    if vram_total is not None and vram_total > 0:
+                        if vram_free is not None and vram_free > 0:
+                            # Calculate used VRAM from total and free
+                            vram_used_display = vram_total - vram_free
+                            vram_free_display = vram_free
+
+                            # Validate that used doesn't exceed total
+                            if vram_used_display < 0:
+                                vram_used_display = 0
+                                logging.warning(
+                                    f"Calculated VRAM used was negative, setting to 0"
+                                )
+
+                            logging.info(
+                                f"VRAM calculation: total={vram_total}, free={vram_free}, used={vram_used_display}"
+                            )
+                        else:
+                            # Only have total, can't calculate usage
+                            vram_used_display = None
+                            vram_free_display = None
+                            logging.warning(
+                                f"VRAM total available ({vram_total}) but free value is missing or invalid"
+                            )
+
+                        # Convert to human-readable units and display
+                        if vram_total >= 1024**3:  # >= 1 GB
+                            vram_total_gb = vram_total / (1024**3)
+                            if vram_used_display is not None:
+                                vram_used_gb = vram_used_display / (1024**3)
+                                vram_free_gb = vram_free_display / (1024**3)
+                                message += f"VRAM: {vram_used_gb:.1f} / {vram_total_gb:.1f} GB (Free: {vram_free_gb:.1f} GB)\n"
+                            else:
+                                message += (
+                                    f"VRAM: {vram_total_gb:.1f} GB (usage unknown)\n"
+                                )
+                        else:  # < 1 GB, show in MB
+                            vram_total_mb = vram_total / (1024**2)
+                            if vram_used_display is not None:
+                                vram_used_mb = vram_used_display / (1024**2)
+                                vram_free_mb = vram_free_display / (1024**2)
+                                message += f"VRAM: {vram_used_mb:.1f} / {vram_total_mb:.1f} MB (Free: {vram_free_mb:.1f} MB)\n"
+                            else:
+                                message += (
+                                    f"VRAM: {vram_total_mb:.1f} MB (usage unknown)\n"
+                                )
+                    else:
+                        logging.warning(
+                            f"No valid VRAM total found in device data: {device}"
+                        )
+                        message += (
+                            "VRAM: Unable to determine (check ComfyUI system stats)\n"
+                        )
+
+                return generate_success_response(message.strip())
+            else:
+                return generate_success_response(
+                    "ComfyUI service is running and responding."
+                )
+
+        except (requests.exceptions.RequestException, json.JSONDecodeError):
+            # If system stats fails, just return basic status
+            return generate_success_response(
+                "ComfyUI service is running and responding."
+            )
+
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Could not connect to ComfyUI server at {COMFYUI_URL}. Is the service running?"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.Timeout:
+        error_msg = "Request to ComfyUI server timed out"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"ComfyUI request failed with status code {e.response.status_code}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except Exception as e:
+        error_msg = f"Unexpected error checking ComfyUI status: {str(e)}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+
+
+def comfyui_free_memory(
+    params: dict = None, context: dict = None, system_info: dict = None
+) -> dict:
+    """Command handler for `comfyui_free_memory` function
+
+    Calls the ComfyUI /free endpoint to free memory and/or unload models.
+
+    Args:
+        params: Function parameters (can include 'unload_models' and 'free_memory')
+        context: Context information (not used)
+        system_info: System information (not used)
+
+    Returns:
+        The function return value indicating success or failure
+    """
+    logging.info("Executing comfyui_free_memory")
+
+    try:
+        # Reload configuration to ensure we have the latest values
+        load_config()
+
+        global COMFYUI_URL
+
+        if not COMFYUI_URL:
+            return generate_failure_response(
+                "COMFYUI_URL not configured. Please set COMFYUI_URL in config.json"
+            )
+
+        # Get parameters from params (optional)
+        unload_models = params.get("unload_models", True) if params else True
+        free_memory = params.get("free_memory", True) if params else True
+
+        # Convert string parameters to boolean if needed
+        if isinstance(unload_models, str):
+            unload_models = unload_models.lower() in ["true", "1", "yes", "on"]
+        if isinstance(free_memory, str):
+            free_memory = free_memory.lower() in ["true", "1", "yes", "on"]
+
+        # Construct the free endpoint URL
+        free_url = f"{COMFYUI_URL}/free"
+
+        # Prepare the payload
+        payload = {
+            "unload_models": unload_models,
+            "free_memory": free_memory
+        }
+
+        logging.info(f"Calling ComfyUI free endpoint at: {free_url}")
+        logging.info(f"Payload: {payload}")
+
+        # Make the POST request to the free endpoint
+        response = requests.post(
+            free_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+
+        # Check for HTTP errors
+        response.raise_for_status()
+
+        logging.info("Successfully called ComfyUI free endpoint")
+
+        # Create a descriptive message based on what was requested
+        actions = []
+        if unload_models:
+            actions.append("unload models")
+        if free_memory:
+            actions.append("free memory")
+        
+        if actions:
+            action_text = " and ".join(actions)
+            message = f"ComfyUI has been instructed to {action_text} successfully"
+        else:
+            message = "ComfyUI free endpoint called successfully (no actions requested)"
+
+        return generate_success_response(message)
+
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Could not connect to ComfyUI server at {COMFYUI_URL}. Is the service running?"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.Timeout:
+        error_msg = "Request to ComfyUI server timed out after 30 seconds"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"ComfyUI free endpoint request failed with status code {e.response.status_code}"
+        logging.error(error_msg)
+        return generate_failure_response(error_msg)
+    except Exception as e:
+        error_msg = f"Unexpected error calling ComfyUI free endpoint: {str(e)}"
         logging.error(error_msg)
         return generate_failure_response(error_msg)
 

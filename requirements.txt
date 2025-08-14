@@ -3,3 +3,4 @@ pyinstaller==6.11.0
 requests
 Pillow>=10.0.0  # For image manipulation (PIL)
 black
+websocket-client  # For ComfyUI WebSocket communication

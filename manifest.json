@@ -91,6 +91,39 @@
       "properties": {}
     },
     {
+      "name": "comfyui_status",
+      "description": "Check the status of the ComfyUI service and display system information",
+      "tags": [
+        "comfyui",
+        "status",
+        "system",
+        "health"
+      ],
+      "properties": {}
+    },
+    {
+      "name": "comfyui_free_memory",
+      "description": "Call the ComfyUI /free endpoint to free memory and/or unload models",
+      "tags": [
+        "comfyui",
+        "memory",
+        "free",
+        "unload",
+        "models",
+        "cleanup"
+      ],
+      "properties": {
+        "unload_models": {
+          "type": "boolean",
+          "description": "Whether to unload models from memory (optional, defaults to true)"
+        },
+        "free_memory": {
+          "type": "boolean",
+          "description": "Whether to free memory (optional, defaults to true)"
+        }
+      }
+    },
+    {
       "name": "generate_image",
       "description": "Generate an image using the Flux NIM API",
       "tags": [
