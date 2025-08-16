@@ -5,7 +5,7 @@
   "functions": [
     {
       "name": "flux_nim_ready_check",
-      "description": "Test health endpoints on localhost:8000",
+      "description": "Test the health and readiness endpoints of the Flux NIM server",
       "tags": [
         "nim",
         "ready",

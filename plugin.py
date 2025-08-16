@@ -3045,162 +3045,70 @@ def comfyui_status(
 
         # Make a simple GET request to the root endpoint
         response = requests.get(COMFYUI_URL, timeout=10)
-
-        # Check for HTTP errors
         response.raise_for_status()
 
         # If we get here, ComfyUI is responding
         logging.info("ComfyUI service is responding")
 
-        # Try to get some basic system information if available
-        try:
-            # Check if there's a system stats endpoint (some ComfyUI versions have this)
-            system_stats_url = f"{COMFYUI_URL}/system_stats"
-            stats_response = requests.get(system_stats_url, timeout=5)
+        # Get system stats for detailed information
+        system_stats_url = f"{COMFYUI_URL}/system_stats"
+        stats_response = requests.get(system_stats_url, timeout=5)
+        stats_response.raise_for_status()
+        
+        stats_data = stats_response.json()
+        system_info = stats_data.get("system", {})
+        devices = stats_data.get("devices", [])
 
-            if stats_response.status_code == 200:
-                stats_data = stats_response.json()
+        # Build status message
+        message_parts = ["ComfyUI service is running and responding."]
+        
+        # Add ComfyUI version
+        if "comfyui_version" in system_info:
+            message_parts.append(f"Version: {system_info['comfyui_version']}")
+        
+        # Add Python version
+        if "python_version" in system_info:
+            python_version = system_info["python_version"].split()[0]  # Just get version number
+            message_parts.append(f"Python: {python_version}")
+        
+        # Add PyTorch version
+        if "pytorch_version" in system_info:
+            pytorch_version = system_info["pytorch_version"].split("+")[0]  # Remove CUDA suffix
+            message_parts.append(f"PyTorch: {pytorch_version}")
+        
+        # Add RAM information
+        if "ram_total" in system_info and "ram_free" in system_info:
+            ram_total = system_info["ram_total"]
+            ram_free = system_info["ram_free"]
+            ram_used = ram_total - ram_free
+            
+            ram_total_gb = ram_total / (1024**3)
+            ram_used_gb = ram_used / (1024**3)
+            ram_free_gb = ram_free / (1024**3)
+            
+            message_parts.append(f"RAM: {ram_used_gb:.1f} / {ram_total_gb:.1f} GB (Free: {ram_free_gb:.1f} GB)")
+        
+        # Add VRAM information from first device
+        if devices and len(devices) > 0:
+            device = devices[0]
+            
+            if "vram_total" in device and "vram_free" in device:
+                vram_total = device["vram_total"]
+                vram_free = device["vram_free"]
+                vram_used = vram_total - vram_free
+                
+                vram_total_gb = vram_total / (1024**3)
+                vram_used_gb = vram_used / (1024**3)
+                vram_free_gb = vram_free / (1024**3)
+                
+                message_parts.append(f"VRAM: {vram_used_gb:.1f} / {vram_total_gb:.1f} GB (Free: {vram_free_gb:.1f} GB)")
+            
+            # Add device name
+            if "name" in device:
+                device_name = device["name"].split(":")[1].strip() if ":" in device["name"] else device["name"]
+                message_parts.append(f"GPU: {device_name}")
 
-                # Parse the actual ComfyUI system stats structure
-                system_info = stats_data.get("system", {})
-                devices = stats_data.get("devices", [])
-
-                message = f"ComfyUI service is running and responding.\n"
-
-                # Add RAM information if available
-                if "ram_total" in system_info and "ram_free" in system_info:
-                    ram_total = system_info["ram_total"]
-                    ram_free = system_info["ram_free"]
-                    ram_used = ram_total - ram_free
-
-                    # Convert to human-readable units
-                    if ram_total >= 1024**3:  # >= 1 GB
-                        ram_used_gb = ram_used / (1024**3)
-                        ram_total_gb = ram_total / (1024**3)
-                        message += f"RAM: {ram_used_gb:.1f} / {ram_total_gb:.1f} GB\n"
-                    else:  # < 1 GB, show in MB
-                        ram_used_mb = ram_used / (1024**2)
-                        ram_total_mb = ram_total / (1024**2)
-                        message += f"RAM: {ram_used_mb:.1f} / {ram_total_mb:.1f} MB\n"
-
-                # Add VRAM information if available (from first device)
-                if devices and len(devices) > 0:
-                    device = devices[0]
-
-                    # Debug logging to see what fields are available
-                    logging.info(f"Available device fields: {list(device.keys())}")
-                    logging.info(f"Device data: {device}")
-
-                    # Handle different possible VRAM field names and structures
-                    # Try multiple approaches to get accurate VRAM information
-                    vram_total = None
-                    vram_free = None
-
-                    # Strategy 1: Try torch_vram fields first (most accurate for system memory)
-                    if "torch_vram_total" in device and device["torch_vram_total"] > 0:
-                        vram_total = device["torch_vram_total"]
-                        logging.info(f"Using torch_vram_total: {vram_total}")
-                    elif "vram_total" in device and device["vram_total"] > 0:
-                        vram_total = device["vram_total"]
-                        logging.info(f"Using vram_total: {vram_total}")
-
-                    # Strategy 2: Try torch_vram_free first, then vram_free
-                    if "torch_vram_free" in device and device["torch_vram_free"] > 0:
-                        vram_free = device["torch_vram_free"]
-                        logging.info(f"Using torch_vram_free: {vram_free}")
-                    elif "vram_free" in device and device["vram_free"] > 0:
-                        vram_free = device["vram_free"]
-                        logging.info(f"Using vram_free: {vram_free}")
-
-                    # Strategy 3: If we still don't have valid values, try alternative field names
-                    if vram_total is None or vram_total <= 0:
-                        for field in ["total", "gpu_memory_total", "memory_total"]:
-                            if field in device and device[field] > 0:
-                                vram_total = device[field]
-                                logging.info(
-                                    f"Using alternative total field '{field}': {vram_total}"
-                                )
-                                break
-
-                    if vram_free is None or vram_free <= 0:
-                        for field in [
-                            "free",
-                            "gpu_memory_free",
-                            "memory_free",
-                            "available",
-                        ]:
-                            if field in device and device[field] > 0:
-                                vram_free = device[field]
-                                logging.info(
-                                    f"Using alternative free field '{field}': {vram_free}"
-                                )
-                                break
-
-                    # Calculate VRAM usage based on available information
-                    if vram_total is not None and vram_total > 0:
-                        if vram_free is not None and vram_free > 0:
-                            # Calculate used VRAM from total and free
-                            vram_used_display = vram_total - vram_free
-                            vram_free_display = vram_free
-
-                            # Validate that used doesn't exceed total
-                            if vram_used_display < 0:
-                                vram_used_display = 0
-                                logging.warning(
-                                    f"Calculated VRAM used was negative, setting to 0"
-                                )
-
-                            logging.info(
-                                f"VRAM calculation: total={vram_total}, free={vram_free}, used={vram_used_display}"
-                            )
-                        else:
-                            # Only have total, can't calculate usage
-                            vram_used_display = None
-                            vram_free_display = None
-                            logging.warning(
-                                f"VRAM total available ({vram_total}) but free value is missing or invalid"
-                            )
-
-                        # Convert to human-readable units and display
-                        if vram_total >= 1024**3:  # >= 1 GB
-                            vram_total_gb = vram_total / (1024**3)
-                            if vram_used_display is not None:
-                                vram_used_gb = vram_used_display / (1024**3)
-                                vram_free_gb = vram_free_display / (1024**3)
-                                message += f"VRAM: {vram_used_gb:.1f} / {vram_total_gb:.1f} GB (Free: {vram_free_gb:.1f} GB)\n"
-                            else:
-                                message += (
-                                    f"VRAM: {vram_total_gb:.1f} GB (usage unknown)\n"
-                                )
-                        else:  # < 1 GB, show in MB
-                            vram_total_mb = vram_total / (1024**2)
-                            if vram_used_display is not None:
-                                vram_used_mb = vram_used_display / (1024**2)
-                                vram_free_mb = vram_free_display / (1024**2)
-                                message += f"VRAM: {vram_used_mb:.1f} / {vram_total_mb:.1f} MB (Free: {vram_free_mb:.1f} MB)\n"
-                            else:
-                                message += (
-                                    f"VRAM: {vram_total_mb:.1f} MB (usage unknown)\n"
-                                )
-                    else:
-                        logging.warning(
-                            f"No valid VRAM total found in device data: {device}"
-                        )
-                        message += (
-                            "VRAM: Unable to determine (check ComfyUI system stats)\n"
-                        )
-
-                return generate_success_response(message.strip())
-            else:
-                return generate_success_response(
-                    "ComfyUI service is running and responding."
-                )
-
-        except (requests.exceptions.RequestException, json.JSONDecodeError):
-            # If system stats fails, just return basic status
-            return generate_success_response(
-                "ComfyUI service is running and responding."
-            )
+        return generate_success_response("\n".join(message_parts))
 
     except requests.exceptions.ConnectionError:
         error_msg = f"Could not connect to ComfyUI server at {COMFYUI_URL}. Is the service running?"
@@ -3262,10 +3170,7 @@ def comfyui_free_memory(
         free_url = f"{COMFYUI_URL}/free"
 
         # Prepare the payload
-        payload = {
-            "unload_models": unload_models,
-            "free_memory": free_memory
-        }
+        payload = {"unload_models": unload_models, "free_memory": free_memory}
 
         logging.info(f"Calling ComfyUI free endpoint at: {free_url}")
         logging.info(f"Payload: {payload}")
@@ -3275,7 +3180,7 @@ def comfyui_free_memory(
             free_url,
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=30,
         )
 
         # Check for HTTP errors
@@ -3289,7 +3194,7 @@ def comfyui_free_memory(
             actions.append("unload models")
         if free_memory:
             actions.append("free memory")
-        
+
         if actions:
             action_text = " and ".join(actions)
             message = f"ComfyUI has been instructed to {action_text} successfully"
