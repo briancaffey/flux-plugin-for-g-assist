@@ -285,9 +285,9 @@ def main():
         "initialize": execute_initialize_command,
         "shutdown": execute_shutdown_command,
         "flux_nim_ready_check": flux_nim_ready_check,
-        "check_nim_status": check_nim_status,
-        "stop_nim": stop_nim,
-        "start_nim": start_nim,
+        "check_flux_dev_nim_status": check_flux_dev_nim_status,
+        "stop_flux_dev_nim": stop_flux_dev_nim,
+        "start_flux_dev_nim": start_flux_dev_nim,
         "generate_image": generate_image,
         "generate_image_using_kontext": generate_image_using_kontext,
         "invokeai_status": invokeai_status,
@@ -633,10 +633,10 @@ def flux_nim_ready_check(
         return generate_failure_response(f"Error in flux_nim_ready_check: {str(e)}")
 
 
-def check_nim_status(
+def check_flux_dev_nim_status(
     params: dict = None, context: dict = None, system_info: dict = None
 ) -> dict:
-    """Command handler for `check_nim_status` function
+    """Command handler for `check_flux_dev_nim_status` function
 
     Checks the status of the flux NIM server using WSL and podman.
 
@@ -648,7 +648,7 @@ def check_nim_status(
     Returns:
         The function return value(s)
     """
-    logging.info(f"Executing check_nim_status with params: {params}")
+    logging.info(f"Executing check_flux_dev_nim_status with params: {params}")
 
     try:
         # Check if FLUX_DEV container is running using WSL and podman
@@ -674,30 +674,30 @@ def check_nim_status(
 
             if container_names:
                 return generate_success_response(
-                    f"NIM server is running. Container: {container_names}"
+                    f"Flux DevNIM server is running. Container: {container_names}"
                 )
             else:
-                return generate_failure_response("NIM server is not running.")
+                return generate_failure_response("Flux Dev NIM server is not running.")
 
         except subprocess.CalledProcessError as e:
-            logging.error(f"Error checking NIM server status: {e}")
-            return generate_failure_response(f"Error checking NIM server status: {e}")
+            logging.error(f"Error checking Flux Dev NIM server status: {e}")
+            return generate_failure_response(f"Error checking Flux Dev NIM server status: {e}")
         except FileNotFoundError:
             logging.error("WSL or podman command not found")
             return generate_failure_response("WSL or podman command not found")
         except Exception as e:
-            logging.error(f"Unexpected error checking NIM server status: {e}")
-            return generate_failure_response(f"Error checking NIM server status: {e}")
+            logging.error(f"Unexpected error checking Flux Dev NIM server status: {e}")
+            return generate_failure_response(f"Error checking Flux Dev NIM server status: {e}")
 
     except Exception as e:
-        logging.error(f"Error in check_nim_status: {str(e)}")
-        return generate_failure_response(f"Error in check_nim_status: {str(e)}")
+        logging.error(f"Error in check_flux_dev_nim_status: {str(e)}")
+        return generate_failure_response(f"Error in check_flux_dev_nim_status: {str(e)}")
 
 
-def stop_nim(
+def stop_flux_dev_nim(
     params: dict = None, context: dict = None, system_info: dict = None
 ) -> dict:
-    """Command handler for `stop_nim` function
+    """Command handler for `stop_flux_dev_nim` function
 
     Stops the flux NIM server using WSL and podman.
 
@@ -709,7 +709,7 @@ def stop_nim(
     Returns:
         The function return value(s)
     """
-    logging.info(f"Executing stop_nim with params: {params}")
+    logging.info(f"Executing stop_flux_dev_nim with params: {params}")
 
     try:
         # Stop the FLUX_DEV container using WSL and podman
@@ -735,14 +735,14 @@ def stop_nim(
             return generate_failure_response(f"Error stopping NIM server: {e}")
 
     except Exception as e:
-        logging.error(f"Error in stop_nim: {str(e)}")
-        return generate_failure_response(f"Error in stop_nim: {str(e)}")
+        logging.error(f"Error in stop_flux_dev_nim: {str(e)}")
+        return generate_failure_response(f"Error in stop_flux_dev_nim: {str(e)}")
 
 
-def start_nim(
+def start_flux_dev_nim(
     params: dict = None, context: dict = None, system_info: dict = None
 ) -> dict:
-    """Command handler for `start_nim` function
+    """Command handler for `start_flux_dev_nim` function
 
     Starts the flux NIM server using WSL and podman with configuration from config.json.
 
@@ -754,7 +754,7 @@ def start_nim(
     Returns:
         The function return value(s)
     """
-    logging.info(f"Executing start_nim with params: {params}")
+    logging.info(f"Executing start_flux_dev_nim with params: {params}")
 
     try:
         # Reload configuration to ensure we have the latest values
@@ -779,7 +779,7 @@ def start_nim(
 
         # Check if NIM server is already running
         logging.info("Checking if Flux NIM server is already running...")
-        check_result = check_nim_status()
+        check_result = check_flux_dev_nim_status()
         if check_result.get("success", False):
             return generate_failure_response("Flux NIM server is already running.")
 
@@ -830,8 +830,8 @@ def start_nim(
             return generate_failure_response(f"Error starting NIM server: {e}")
 
     except Exception as e:
-        logging.error(f"Error in start_nim: {str(e)}")
-        return generate_failure_response(f"Error in start_nim: {str(e)}")
+        logging.error(f"Error in start_flux_dev_nim: {str(e)}")
+        return generate_failure_response(f"Error in start_flux_dev_nim: {str(e)}")
 
 
 def flux_kontext_nim_ready_check(
@@ -3054,58 +3054,70 @@ def comfyui_status(
         system_stats_url = f"{COMFYUI_URL}/system_stats"
         stats_response = requests.get(system_stats_url, timeout=5)
         stats_response.raise_for_status()
-        
+
         stats_data = stats_response.json()
         system_info = stats_data.get("system", {})
         devices = stats_data.get("devices", [])
 
         # Build status message
         message_parts = ["ComfyUI service is running and responding."]
-        
+
         # Add ComfyUI version
         if "comfyui_version" in system_info:
             message_parts.append(f"Version: {system_info['comfyui_version']}")
-        
+
         # Add Python version
         if "python_version" in system_info:
-            python_version = system_info["python_version"].split()[0]  # Just get version number
+            python_version = system_info["python_version"].split()[
+                0
+            ]  # Just get version number
             message_parts.append(f"Python: {python_version}")
-        
+
         # Add PyTorch version
         if "pytorch_version" in system_info:
-            pytorch_version = system_info["pytorch_version"].split("+")[0]  # Remove CUDA suffix
+            pytorch_version = system_info["pytorch_version"].split("+")[
+                0
+            ]  # Remove CUDA suffix
             message_parts.append(f"PyTorch: {pytorch_version}")
-        
+
         # Add RAM information
         if "ram_total" in system_info and "ram_free" in system_info:
             ram_total = system_info["ram_total"]
             ram_free = system_info["ram_free"]
             ram_used = ram_total - ram_free
-            
+
             ram_total_gb = ram_total / (1024**3)
             ram_used_gb = ram_used / (1024**3)
             ram_free_gb = ram_free / (1024**3)
-            
-            message_parts.append(f"RAM: {ram_used_gb:.1f} / {ram_total_gb:.1f} GB (Free: {ram_free_gb:.1f} GB)")
-        
+
+            message_parts.append(
+                f"RAM: {ram_used_gb:.1f} / {ram_total_gb:.1f} GB (Free: {ram_free_gb:.1f} GB)"
+            )
+
         # Add VRAM information from first device
         if devices and len(devices) > 0:
             device = devices[0]
-            
+
             if "vram_total" in device and "vram_free" in device:
                 vram_total = device["vram_total"]
                 vram_free = device["vram_free"]
                 vram_used = vram_total - vram_free
-                
+
                 vram_total_gb = vram_total / (1024**3)
                 vram_used_gb = vram_used / (1024**3)
                 vram_free_gb = vram_free / (1024**3)
-                
-                message_parts.append(f"VRAM: {vram_used_gb:.1f} / {vram_total_gb:.1f} GB (Free: {vram_free_gb:.1f} GB)")
-            
+
+                message_parts.append(
+                    f"VRAM: {vram_used_gb:.1f} / {vram_total_gb:.1f} GB (Free: {vram_free_gb:.1f} GB)"
+                )
+
             # Add device name
             if "name" in device:
-                device_name = device["name"].split(":")[1].strip() if ":" in device["name"] else device["name"]
+                device_name = (
+                    device["name"].split(":")[1].strip()
+                    if ":" in device["name"]
+                    else device["name"]
+                )
                 message_parts.append(f"GPU: {device_name}")
 
         return generate_success_response("\n".join(message_parts))

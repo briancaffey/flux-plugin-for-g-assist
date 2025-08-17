@@ -380,7 +380,7 @@ The Flux Plug-in for G-Assist supports the following commands:
 | `flux_nim_ready_check` | Tests health endpoints of the Flux NIM server | "hey flux, check if the flux nim server is ready" |
 | `check_nim_status` | Checks if the Flux NIM server is running | "hey flux, check if the nim server is running" |
 | `stop_nim` | Stops the Flux NIM server | "hey flux, stop the flux nim server" |
-| `start_nim` | Starts the Flux NIM server | "hey flux, start the flux nim server" |
+| `start_flux_dev_nim` | Starts the Flux Dev NIM server | "hey flux, start the flux dev nim server" |
 | `generate_image` | Generates an image from text prompt using Flux | "hey flux, generate an image of a cyberpunk city" |
 | `generate_image_using_kontext` | Performs image-to-image generation using Flux Kontext | "hey flux, use kontext to make it a cartoon style" |
 | `invokeai_status` | Checks the status of the InvokeAI service | "hey flux, check invokeai status" |

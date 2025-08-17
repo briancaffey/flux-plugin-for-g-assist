@@ -4,9 +4,11 @@
   "persistent": true,
   "functions": [
     {
-      "name": "flux_nim_ready_check",
-      "description": "Test the health and readiness endpoints of the Flux NIM server",
+      "name": "flux_dev_nim_ready_check",
+      "description": "Test the health and readiness endpoints of the Flux dev NIM server",
       "tags": [
+        "flux",
+        "dev",
         "nim",
         "ready",
         "health",
@@ -15,32 +17,35 @@
       "properties": {}
     },
     {
-      "name": "check_nim_status",
-      "description": "Check the status of the flux NIM server",
+      "name": "check_flux_dev_nim_status",
+      "description": "Check the status of the flux dev NIM server",
       "tags": [
+        "flux",
+        "dev",
         "nim",
-        "status",
-        "flux"
+        "status"
       ],
       "properties": {}
     },
     {
       "name": "stop_nim",
-      "description": "Stop the flux NIM server",
+      "description": "Stop the flux dev NIM server",
       "tags": [
         "nim",
         "stop",
-        "flux"
+        "flux",
+        "dev"
       ],
       "properties": {}
     },
     {
-      "name": "start_nim",
-      "description": "Start the flux NIM server",
+      "name": "start_flux_dev_nim",
+      "description": "Start the Flux dev NIM server",
       "tags": [
         "nim",
         "start",
-        "flux"
+        "flux",
+        "dev"
       ],
       "properties": {}
     },
@@ -53,7 +58,8 @@
         "ready",
         "health",
         "endpoints",
-        "flux"
+        "flux",
+        "context"
       ],
       "properties": {}
     },
@@ -125,7 +131,7 @@
     },
     {
       "name": "generate_image",
-      "description": "Generate an image using the Flux NIM API",
+      "description": "Generate an image using the Flux dev NIM API",
       "tags": [
         "image",
         "generate",
