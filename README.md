@@ -111,7 +111,7 @@ Follow instructions [here](https://build.nvidia.com/black-forest-labs/flux_1-dev
 
 - follow instructions here: [https://docs.nvidia.com/nim/wsl2/latest/getting-started.html](https://docs.nvidia.com/nim/wsl2/latest/getting-started.html) for getting started with WSL
 - use the [NVIDIA NIM WSL2 Installer](https://docs.nvidia.com/nim/wsl2/latest/getting-started.html#use-the-nvidia-nim-wsl2-installer-recommended) for configuring a new WSL environment configured with all of the required NVIDIA dependencies
-- In your Hugging Face account read and accept FLUX.1-dev, FLUX.1-Canny-dev, FLUX.1-Depth-dev and FLUX.1-dev-onnx License Agreements and Acceptable Use Policy. You must accept the agreements/policies for all of the models even though this plugin does not directly use the Canny or Depth modes.
+- In your Hugging Face account read and accept FLUX.1-dev, FLUX.1-Canny-dev, FLUX.1-Depth-dev, FLUX.1-dev-onnx FLUX.1-Kontext-dev and FLUX.1-Kontext-dev-onnx License Agreements and Acceptable Use Policy. You must accept the agreements/policies for all of the models even though this plugin does not directly use the Canny or Depth modes.
 - Make sure to map port `8000` in the NIM to port `8000` on the WSL host as shown in the setup link above. 
 
 ### Step 6: Install InvokeAI (optional)
