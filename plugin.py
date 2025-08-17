@@ -31,6 +31,7 @@ import uuid
 from datetime import datetime
 from ctypes import wintypes
 import urllib.parse
+import winreg
 
 # Data Types
 type Response = dict[str, any]
@@ -67,6 +68,7 @@ INVOKEAI_BOARD_ID = None
 def set_desktop_background(image_path: str) -> bool:
     """
     Sets the specified image as the desktop background.
+    Uses "fill" method for 1344x768 images to match monitor aspect ratio, "fit" method for all others.
 
     Args:
         image_path (str): Full path to the image file
@@ -79,6 +81,52 @@ def set_desktop_background(image_path: str) -> bool:
         if not os.path.exists(image_path):
             logging.error(f"Image file does not exist: {image_path}")
             return False
+
+
+
+        # Determine positioning method based on image dimensions
+        try:
+            # Open image to check dimensions
+            with Image.open(image_path) as img:
+                width, height = img.size
+                
+                # Use "fit" method for 1344x768 images, "fill" for all others
+                if width == 1344 and height == 768:
+                    position = "fit"
+                    logging.info(f"1344x768 image detected, using 'fill' positioning")
+                else:
+                    position = "fill"
+                    logging.info(f"Image size {width}x{height}, using 'fit' positioning")
+        except Exception as e:
+            logging.warning(f"Could not determine image dimensions, using default 'fit' positioning: {e}")
+            position = "fit"
+
+        # WallpaperStyle registry values
+        wallpaper_styles = {
+            "center": 0,      # Center (no stretching)
+            "tile": 1,        # Tile
+            "stretch": 2,     # Stretch (default)
+            "fit": 3,         # Fit (maintain aspect ratio)
+            "fill": 6,        # Fill (maintain aspect ratio, crop)
+            "span": 10        # Span across monitors
+        }
+
+        # Set registry values for wallpaper positioning
+        try:
+            # Open the registry key for current user
+            key_path = r"Control Panel\Desktop"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE) as key:
+                # Set WallpaperStyle
+                winreg.SetValueEx(key, "WallpaperStyle", 0, winreg.REG_SZ, str(wallpaper_styles[position]))
+                
+                # Set TileWallpaper (0 for most styles, 1 for tile)
+                tile_value = "1" if position == "tile" else "0"
+                winreg.SetValueEx(key, "TileWallpaper", 0, winreg.REG_SZ, tile_value)
+                
+                logging.info(f"Set wallpaper positioning: {position} (WallpaperStyle={wallpaper_styles[position]}, TileWallpaper={tile_value})")
+        except Exception as e:
+            logging.warning(f"Failed to set wallpaper positioning in registry: {e}")
+            # Continue with default positioning
 
         # Use Windows API to set the desktop background
         SPI_SETDESKWALLPAPER = 0x0014
@@ -94,7 +142,7 @@ def set_desktop_background(image_path: str) -> bool:
         )
 
         if result:
-            logging.info(f"Successfully set desktop background to: {abs_path}")
+            logging.info(f"Successfully set desktop background to: {abs_path} with position: {position}")
             return True
         else:
             logging.error(f"Failed to set desktop background to: {abs_path}")
