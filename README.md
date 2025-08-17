@@ -89,7 +89,7 @@ Copy the `config.example.json` file and rename it as `config.json` and place it 
 ```json
 {
     "GALLERY_DIRECTORY": "E:\\NVIDIA",
-    "FLUX_NIM_URL": "http://localhost:8000",
+    "FLUX_DEV_NIM_URL": "http://localhost:8000",
     "NGC_API_KEY": "xxxxxxxx",
     "HF_TOKEN": "hf_xxxxxxxx",
     "LOCAL_NIM_CACHE": "~/.cache/nim",
@@ -192,7 +192,7 @@ The Flux plugin uses a `config.json` file to manage all settings. Copy `config.e
 | `INVOKEAI_BOARD_ID` | `"my-gallery-board"`, `"flux-gallery"` | No |
 | `COMFYUI_URL` | `"http://localhost:8188"`, `"http://192.168.1.100:8188"` | No |
 
-*Required only when using NVIDIA hosted Flux service (`FLUX_NIM_URL` starts with "https://ai.api.nvidia.com", e.g. https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev)
+*Required only when using NVIDIA hosted Flux service (`FLUX_DEV_NIM_URL` starts with "https://ai.api.nvidia.com", e.g. https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev)
 **Required only when using local NIM server
 
 ## Using the Flux.1-dev NVIDIA NIM for text-to-image generation

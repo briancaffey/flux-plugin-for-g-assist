@@ -142,6 +142,14 @@
         "prompt": {
           "type": "string",
           "description": "Text prompt describing the image to generate"
+        },
+        "steps": {
+          "type": "integer",
+          "description": "Number of inference steps for image generation (optional, defaults to 30, range 20-50)"
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "description": "Aspect ratio for the generated image (optional, defaults to '16:9'). Valid values: 1:1, 16:9, 9:16, 5:4, 4:5, 3:2, 2:3"
         }
       }
     },

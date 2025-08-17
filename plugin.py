@@ -56,7 +56,7 @@ OUTPUT_DIRECTORY = os.path.join(os.environ.get("USERPROFILE", "."), "flux_output
 BUILD_NVIDIA_COM_FLUX_HOSTED_NIM = (
     "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
 )
-FLUX_NIM_URL = None
+FLUX_DEV_NIM_URL = None
 INVOKEAI_URL = "http://localhost:9090"
 FLUX_KONTEXT_NIM_URL = "http://localhost:8011"
 COMFYUI_URL = "http://localhost:8188"
@@ -229,7 +229,7 @@ def prepare_image_for_comfyui(
 
 def load_config():
     """Load configuration from config.json file"""
-    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_NIM_URL, INVOKEAI_URL, FLUX_KONTEXT_NIM_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, INVOKEAI_BOARD_ID
+    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_DEV_NIM_URL, INVOKEAI_URL, FLUX_KONTEXT_NIM_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, INVOKEAI_BOARD_ID
     try:
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
@@ -239,7 +239,7 @@ def load_config():
             HF_TOKEN = config.get("HF_TOKEN", None)
             LOCAL_NIM_CACHE = config.get("LOCAL_NIM_CACHE", None)
             OUTPUT_DIRECTORY = config.get("OUTPUT_DIRECTORY", OUTPUT_DIRECTORY)
-            FLUX_NIM_URL = config.get("FLUX_NIM_URL", BUILD_NVIDIA_COM_FLUX_HOSTED_NIM)
+            FLUX_DEV_NIM_URL = config.get("FLUX_DEV_NIM_URL", BUILD_NVIDIA_COM_FLUX_HOSTED_NIM)
             INVOKEAI_URL = config.get("INVOKEAI_URL", "http://localhost:9090")
             FLUX_KONTEXT_NIM_URL = config.get(
                 "FLUX_KONTEXT_NIM_URL", "http://localhost:8011"
@@ -542,7 +542,7 @@ def check_flux_dev_nim_ready(
 ) -> dict:
     """Command handler for `check_flux_dev_nim_ready` function
 
-    Tests health endpoints using the configured FLUX_NIM_URL.
+    Tests health endpoints using the configured FLUX_DEV_NIM_URL.
 
     Args:
         params: Function parameters
@@ -559,19 +559,19 @@ def check_flux_dev_nim_ready(
         load_config()
 
         # Get the base URL from configuration
-        global FLUX_NIM_URL
-        if not FLUX_NIM_URL:
+        global FLUX_DEV_NIM_URL
+        if not FLUX_DEV_NIM_URL:
             return generate_failure_response(
-                "FLUX_NIM_URL not configured. Please set FLUX_NIM_URL in config.json"
+                "FLUX_DEV_NIM_URL not configured. Please set FLUX_DEV_NIM_URL in config.json"
             )
 
         # Check if using NVIDIA hosted service
-        if FLUX_NIM_URL.startswith("https://ai.api.nvidia.com"):
-            logging.info("Using NVIDIA hosted Flux service - no health check needed")
-            return generate_success_response("Using NVIDIA hosted Flux service")
+        if FLUX_DEV_NIM_URL.startswith("https://ai.api.nvidia.com"):
+            logging.info("Using NVIDIA hosted Flux dev service - no health check needed")
+            return generate_success_response("Using NVIDIA hosted Flux service.")
 
         # Extract base URL for health endpoints (remove /v1/infer if present for local servers)
-        base_url = FLUX_NIM_URL
+        base_url = FLUX_DEV_NIM_URL
 
         # Step 1: Test live endpoint
         logging.info("Testing /v1/health/live endpoint...")
@@ -772,8 +772,8 @@ def start_flux_dev_nim(
         if check_result.get("success", False):
             return generate_failure_response("Flux dev NIM server is already running.")
 
-        # Get port from FLUX_NIM_URL
-        port = FLUX_NIM_URL.split(":")[-1]
+        # Get port from FLUX_DEV_NIM_URL
+        port = FLUX_DEV_NIM_URL.split(":")[-1]
 
         # Build the podman command
         logging.info("Starting Flux dev NIM server...")
@@ -1143,21 +1143,52 @@ def start_flux_kontext_nim(
         return generate_failure_response(f"Error in start_flux_kontext_nim: {str(e)}")
 
 
+def get_dimensions_from_aspect_ratio(aspect_ratio: str) -> tuple[int, int]:
+    """
+    Maps aspect ratio strings to hardcoded width/height pairs.
+    
+    Args:
+        aspect_ratio (str): Aspect ratio string (e.g., "16:9", "1:1")
+        
+    Returns:
+        tuple[int, int]: (width, height) pair using valid dimensions
+        
+    Valid dimensions: 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1344
+    """
+    # Hardcoded aspect ratio to width/height mappings
+    aspect_ratio_dimensions = {
+        "1:1": (1024, 1024),      # Square
+        "16:9": (1344, 768),      # Widescreen landscape
+        "9:16": (768, 1344),      # Portrait
+        "5:4": (1280, 1024),      # Traditional photo
+        "4:5": (1024, 1280),      # Portrait photo
+        "3:2": (1152, 768),       # Classic photo
+        "2:3": (768, 1152),       # Portrait classic
+    }
+    
+    if aspect_ratio not in aspect_ratio_dimensions:
+        raise ValueError(f"Invalid aspect ratio: {aspect_ratio}")
+    
+    return aspect_ratio_dimensions[aspect_ratio]
+
+
 def generate_image_worker(
-    prompt: str, output_dir: str, flux_url: str, nvidia_api_key: str
+    prompt: str, output_dir: str, flux_url: str, nvidia_api_key: str, 
+    width: int = 1344, height: int = 768, steps: int = 30
 ):
     """Background worker function to generate image"""
     try:
         logging.info(f"Starting background image generation for prompt: {prompt}")
+        logging.info(f"Using dimensions: {width}x{height}, steps: {steps}")
 
         payload = {
-            "height": 768,
-            "width": 1344,
+            "height": height,
+            "width": width,
             "cfg_scale": 5,
             "mode": "base",
             "samples": 1,
             "seed": 0,  # random seed
-            "steps": 50,
+            "steps": steps,
             "prompt": prompt,
         }
 
@@ -1255,8 +1286,8 @@ def generate_image(
         load_config()
 
         # Check if NVIDIA API key is configured (only required for NVIDIA API endpoints)
-        global NVIDIA_API_KEY, FLUX_NIM_URL
-        if FLUX_NIM_URL.startswith("https://ai.api.nvidia.com"):
+        global NVIDIA_API_KEY, FLUX_DEV_NIM_URL
+        if FLUX_DEV_NIM_URL.startswith("https://ai.api.nvidia.com"):
             if (
                 not NVIDIA_API_KEY
                 or NVIDIA_API_KEY == "YOUR_NVIDIA_API_KEY_HERE"
@@ -1274,6 +1305,32 @@ def generate_image(
         else:
             logging.info(f"Using provided prompt: {prompt}")
 
+        # Get steps parameter and validate
+        steps = params.get("steps", 30) if params else 30
+        try:
+            steps = int(steps)
+            if steps < 20 or steps > 50:
+                return generate_failure_response(
+                    "Steps parameter must be between 20 and 50 (inclusive)"
+                )
+        except (ValueError, TypeError):
+            return generate_failure_response("Steps parameter must be an integer")
+
+        # Get aspect_ratio parameter and validate
+        aspect_ratio = params.get("aspect_ratio", "16:9") if params else "16:9"
+        valid_aspect_ratios = ["1:1", "16:9", "9:16", "5:4", "4:5", "3:2", "2:3"]
+        if aspect_ratio not in valid_aspect_ratios:
+            return generate_failure_response(
+                f"Invalid aspect_ratio: {aspect_ratio}. Please specify one of: {', '.join(valid_aspect_ratios)}"
+            )
+
+        # Calculate dimensions from aspect ratio
+        try:
+            width, height = get_dimensions_from_aspect_ratio(aspect_ratio)
+            logging.info(f"Calculated dimensions for {aspect_ratio}: {width}x{height}")
+        except ValueError as e:
+            return generate_failure_response(f"Error calculating dimensions: {e}")
+
         # Ensure output directory exists
         global OUTPUT_DIRECTORY
         try:
@@ -1287,14 +1344,15 @@ def generate_image(
         # Start image generation in background thread
         thread = threading.Thread(
             target=generate_image_worker,
-            args=(prompt, OUTPUT_DIRECTORY, FLUX_NIM_URL, NVIDIA_API_KEY),
+            args=(prompt, OUTPUT_DIRECTORY, FLUX_DEV_NIM_URL, NVIDIA_API_KEY, width, height, steps),
             daemon=True,
         )
         thread.start()
 
         logging.info(f"Started background image generation thread for prompt: {prompt}")
+        logging.info(f"Using aspect ratio: {aspect_ratio}, dimensions: {width}x{height}, steps: {steps}")
         return generate_success_response(
-            f'Your image generation request is in progress! Prompt: "{prompt}"'
+            f'Your image generation request is in progress! Prompt: "{prompt}", Aspect Ratio: {aspect_ratio}, Steps: {steps}'
         )
 
     except Exception as e:
