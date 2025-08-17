@@ -82,48 +82,60 @@ def set_desktop_background(image_path: str) -> bool:
             logging.error(f"Image file does not exist: {image_path}")
             return False
 
-
-
         # Determine positioning method based on image dimensions
         try:
             # Open image to check dimensions
             with Image.open(image_path) as img:
                 width, height = img.size
-                
+
                 # Use "fit" method for 1344x768 images, "fill" for all others
                 if width == 1344 and height == 768:
                     position = "fit"
                     logging.info(f"1344x768 image detected, using 'fill' positioning")
                 else:
                     position = "fill"
-                    logging.info(f"Image size {width}x{height}, using 'fit' positioning")
+                    logging.info(
+                        f"Image size {width}x{height}, using 'fit' positioning"
+                    )
         except Exception as e:
-            logging.warning(f"Could not determine image dimensions, using default 'fit' positioning: {e}")
+            logging.warning(
+                f"Could not determine image dimensions, using default 'fit' positioning: {e}"
+            )
             position = "fit"
 
         # WallpaperStyle registry values
         wallpaper_styles = {
-            "center": 0,      # Center (no stretching)
-            "tile": 1,        # Tile
-            "stretch": 2,     # Stretch (default)
-            "fit": 3,         # Fit (maintain aspect ratio)
-            "fill": 6,        # Fill (maintain aspect ratio, crop)
-            "span": 10        # Span across monitors
+            "center": 0,  # Center (no stretching)
+            "tile": 1,  # Tile
+            "stretch": 2,  # Stretch (default)
+            "fit": 3,  # Fit (maintain aspect ratio)
+            "fill": 6,  # Fill (maintain aspect ratio, crop)
+            "span": 10,  # Span across monitors
         }
 
         # Set registry values for wallpaper positioning
         try:
             # Open the registry key for current user
             key_path = r"Control Panel\Desktop"
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE) as key:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE
+            ) as key:
                 # Set WallpaperStyle
-                winreg.SetValueEx(key, "WallpaperStyle", 0, winreg.REG_SZ, str(wallpaper_styles[position]))
-                
+                winreg.SetValueEx(
+                    key,
+                    "WallpaperStyle",
+                    0,
+                    winreg.REG_SZ,
+                    str(wallpaper_styles[position]),
+                )
+
                 # Set TileWallpaper (0 for most styles, 1 for tile)
                 tile_value = "1" if position == "tile" else "0"
                 winreg.SetValueEx(key, "TileWallpaper", 0, winreg.REG_SZ, tile_value)
-                
-                logging.info(f"Set wallpaper positioning: {position} (WallpaperStyle={wallpaper_styles[position]}, TileWallpaper={tile_value})")
+
+                logging.info(
+                    f"Set wallpaper positioning: {position} (WallpaperStyle={wallpaper_styles[position]}, TileWallpaper={tile_value})"
+                )
         except Exception as e:
             logging.warning(f"Failed to set wallpaper positioning in registry: {e}")
             # Continue with default positioning
@@ -142,7 +154,9 @@ def set_desktop_background(image_path: str) -> bool:
         )
 
         if result:
-            logging.info(f"Successfully set desktop background to: {abs_path} with position: {position}")
+            logging.info(
+                f"Successfully set desktop background to: {abs_path} with position: {position}"
+            )
             return True
         else:
             logging.error(f"Failed to set desktop background to: {abs_path}")
@@ -287,7 +301,9 @@ def load_config():
             HF_TOKEN = config.get("HF_TOKEN", None)
             LOCAL_NIM_CACHE = config.get("LOCAL_NIM_CACHE", None)
             OUTPUT_DIRECTORY = config.get("OUTPUT_DIRECTORY", OUTPUT_DIRECTORY)
-            FLUX_DEV_NIM_URL = config.get("FLUX_DEV_NIM_URL", BUILD_NVIDIA_COM_FLUX_HOSTED_NIM)
+            FLUX_DEV_NIM_URL = config.get(
+                "FLUX_DEV_NIM_URL", BUILD_NVIDIA_COM_FLUX_HOSTED_NIM
+            )
             INVOKEAI_URL = config.get("INVOKEAI_URL", "http://localhost:9090")
             FLUX_KONTEXT_NIM_URL = config.get(
                 "FLUX_KONTEXT_NIM_URL", "http://localhost:8011"
@@ -332,25 +348,20 @@ def main():
     commands = {
         "initialize": execute_initialize_command,
         "shutdown": execute_shutdown_command,
-
         "check_flux_dev_nim_status": check_flux_dev_nim_status,
         "check_flux_dev_nim_ready": check_flux_dev_nim_ready,
         "stop_flux_dev_nim": stop_flux_dev_nim,
         "start_flux_dev_nim": start_flux_dev_nim,
-
         "generate_image": generate_image,
         "generate_image_using_kontext": generate_image_using_kontext,
-
         "flux_kontext_nim_ready_check": flux_kontext_nim_ready_check,
         "check_flux_kontext_nim_status": check_flux_kontext_nim_status,
         "stop_flux_kontext_nim": stop_flux_kontext_nim,
         "start_flux_kontext_nim": start_flux_kontext_nim,
-
         "invokeai_status": invokeai_status,
         "pause_invokeai_processor": pause_invokeai_processor,
         "resume_invokeai_processor": resume_invokeai_processor,
         "invokeai_empty_model_cache": invokeai_empty_model_cache,
-
         "comfyui_status": comfyui_status,
         "comfyui_free_memory": comfyui_free_memory,
     }
@@ -615,7 +626,9 @@ def check_flux_dev_nim_ready(
 
         # Check if using NVIDIA hosted service
         if FLUX_DEV_NIM_URL.startswith("https://ai.api.nvidia.com"):
-            logging.info("Using NVIDIA hosted Flux dev service - no health check needed")
+            logging.info(
+                "Using NVIDIA hosted Flux dev service - no health check needed"
+            )
             return generate_success_response("Using NVIDIA hosted Flux service.")
 
         # Extract base URL for health endpoints (remove /v1/infer if present for local servers)
@@ -718,17 +731,23 @@ def check_flux_dev_nim_status(
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Error checking Flux Dev NIM server status: {e}")
-            return generate_failure_response(f"Error checking Flux Dev NIM server status: {e}")
+            return generate_failure_response(
+                f"Error checking Flux Dev NIM server status: {e}"
+            )
         except FileNotFoundError:
             logging.error("WSL or podman command not found")
             return generate_failure_response("WSL or podman command not found")
         except Exception as e:
             logging.error(f"Unexpected error checking Flux Dev NIM server status: {e}")
-            return generate_failure_response(f"Error checking Flux Dev NIM server status: {e}")
+            return generate_failure_response(
+                f"Error checking Flux Dev NIM server status: {e}"
+            )
 
     except Exception as e:
         logging.error(f"Error in check_flux_dev_nim_status: {str(e)}")
-        return generate_failure_response(f"Error in check_flux_dev_nim_status: {str(e)}")
+        return generate_failure_response(
+            f"Error in check_flux_dev_nim_status: {str(e)}"
+        )
 
 
 def stop_flux_dev_nim(
@@ -1194,35 +1213,40 @@ def start_flux_kontext_nim(
 def get_dimensions_from_aspect_ratio(aspect_ratio: str) -> tuple[int, int]:
     """
     Maps aspect ratio strings to hardcoded width/height pairs.
-    
+
     Args:
         aspect_ratio (str): Aspect ratio string (e.g., "16:9", "1:1")
-        
+
     Returns:
         tuple[int, int]: (width, height) pair using valid dimensions
-        
+
     Valid dimensions: 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1344
     """
     # Hardcoded aspect ratio to width/height mappings
     aspect_ratio_dimensions = {
-        "1:1": (1024, 1024),      # Square
-        "16:9": (1344, 768),      # Widescreen landscape
-        "9:16": (768, 1344),      # Portrait
-        "5:4": (1280, 1024),      # Traditional photo
-        "4:5": (1024, 1280),      # Portrait photo
-        "3:2": (1152, 768),       # Classic photo
-        "2:3": (768, 1152),       # Portrait classic
+        "1:1": (1024, 1024),  # Square
+        "16:9": (1344, 768),  # Widescreen landscape
+        "9:16": (768, 1344),  # Portrait
+        "5:4": (1280, 1024),  # Traditional photo
+        "4:5": (1024, 1280),  # Portrait photo
+        "3:2": (1152, 768),  # Classic photo
+        "2:3": (768, 1152),  # Portrait classic
     }
-    
+
     if aspect_ratio not in aspect_ratio_dimensions:
         raise ValueError(f"Invalid aspect ratio: {aspect_ratio}")
-    
+
     return aspect_ratio_dimensions[aspect_ratio]
 
 
 def generate_image_worker(
-    prompt: str, output_dir: str, flux_url: str, nvidia_api_key: str, 
-    width: int = 1344, height: int = 768, steps: int = 30
+    prompt: str,
+    output_dir: str,
+    flux_url: str,
+    nvidia_api_key: str,
+    width: int = 1344,
+    height: int = 768,
+    steps: int = 30,
 ):
     """Background worker function to generate image"""
     try:
@@ -1392,13 +1416,23 @@ def generate_image(
         # Start image generation in background thread
         thread = threading.Thread(
             target=generate_image_worker,
-            args=(prompt, OUTPUT_DIRECTORY, FLUX_DEV_NIM_URL, NVIDIA_API_KEY, width, height, steps),
+            args=(
+                prompt,
+                OUTPUT_DIRECTORY,
+                FLUX_DEV_NIM_URL,
+                NVIDIA_API_KEY,
+                width,
+                height,
+                steps,
+            ),
             daemon=True,
         )
         thread.start()
 
         logging.info(f"Started background image generation thread for prompt: {prompt}")
-        logging.info(f"Using aspect ratio: {aspect_ratio}, dimensions: {width}x{height}, steps: {steps}")
+        logging.info(
+            f"Using aspect ratio: {aspect_ratio}, dimensions: {width}x{height}, steps: {steps}"
+        )
         return generate_success_response(
             f'Your image generation request is in progress! Prompt: "{prompt}", Aspect Ratio: {aspect_ratio}, Steps: {steps}'
         )
@@ -1443,7 +1477,9 @@ def find_most_recent_image(directory: str, extensions: set[str]):
     return latest_file
 
 
-def upload_image_to_invoke(image_path: str, invokeai_url: str, invokeai_board_id: str = None):
+def upload_image_to_invoke(
+    image_path: str, invokeai_url: str, invokeai_board_id: str = None
+):
     """
     Uploads an image to InvokeAI and returns the image name.
 
@@ -1496,7 +1532,7 @@ def upload_image_to_invoke(image_path: str, invokeai_url: str, invokeai_board_id
         return None
 
 
-# This dictionary defines the workflow that will be sent to InvokeAI for doing Flux Kontext generation with the INVOKEAI backend    
+# This dictionary defines the workflow that will be sent to InvokeAI for doing Flux Kontext generation with the INVOKEAI backend
 INVOKEAI_FLUX_KONTEXT_WORKFLOW = {
     "queue_id": "default",
     "enqueued": 0,
@@ -1896,7 +1932,7 @@ def generate_image_using_kontext_worker(
     invokeai_url: str,
     invokeai_board_id: str = None,
     prompt: str = None,
-    steps: int = 30, # TODO: use this config value
+    steps: int = 30,  # TODO: use this config value
 ):
     """Background worker function to upload screenshot and process with InvokeAI"""
     try:
@@ -2200,7 +2236,13 @@ def generate_image_using_kontext(
             # Start InvokeAI generation in background thread
             thread = threading.Thread(
                 target=generate_image_using_kontext_worker,
-                args=(GALLERY_DIRECTORY, INVOKEAI_URL, INVOKEAI_BOARD_ID, prompt, steps),
+                args=(
+                    GALLERY_DIRECTORY,
+                    INVOKEAI_URL,
+                    INVOKEAI_BOARD_ID,
+                    prompt,
+                    steps,
+                ),
                 daemon=True,
             )
             thread.start()
@@ -2561,7 +2603,7 @@ COMFYUI_FLUX_KONTEXT_WORKFLOW = {
         "inputs": {
             "width": ["22", 0],
             "height": ["22", 1],
-            "prompt": "", # replace with actual prompt
+            "prompt": "",  # replace with actual prompt
             "cfg_scale": 2.5,
             "seed": 738487792,
             "steps": 20,
