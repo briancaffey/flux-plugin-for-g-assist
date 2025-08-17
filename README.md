@@ -90,14 +90,18 @@ Copy the `config.example.json` file and rename it as `config.json` and place it 
 
 ```json
 {
-    "GALLERY_DIRECTORY": "E:\\NVIDIA",
+    "GALLERY_DIRECTORY": "D:\\NVIDIA",
+    "HF_TOKEN": "hf_abc123",
+    "NVIDIA_API_KEY": "nvapi-abc123",
+    "NGC_API_KEY": "abc123",
     "FLUX_DEV_NIM_URL": "http://localhost:8000",
-    "NGC_API_KEY": "xxxxxxxx",
-    "HF_TOKEN": "hf_xxxxxxxx",
-    "LOCAL_NIM_CACHE": "~/.cache/nim",
-    "INVOKEAI_URL": "http://localhost:9090",
     "FLUX_KONTEXT_NIM_URL": "http://localhost:8011",
-    "OUTPUT_DIRECTORY": "E:\\Flux"
+    "LOCAL_NIM_CACHE": "~/.cache/nim",
+    "OUTPUT_DIRECTORY": "D:\\flux_output",
+    "FLUX_KONTEXT_INFERENCE_BACKEND": "NIM",
+    "INVOKEAI_URL": "http://localhost:9090",
+    "INVOKEAI_BOARD_ID": "optional-board-id",
+    "COMFYUI_URL": "http://localhost:8188"
 }
 ```
 

@@ -2210,8 +2210,10 @@ def generate_image_using_kontext(
         # Get parameters from params
         prompt = params.get("prompt") if params else None
         if not prompt:
-            return generate_failure_response("Prompt parameter is required. Please provide a prompt for image generation.")
-        
+            return generate_failure_response(
+                "Prompt parameter is required. Please provide a prompt for image generation."
+            )
+
         steps = params.get("steps", 30) if params else 30  # Default to 30 steps
 
         # Validate steps parameter
@@ -2262,7 +2264,14 @@ def generate_image_using_kontext(
             # Start Flux Kontext NIM generation in background thread
             thread = threading.Thread(
                 target=generate_image_using_kontext_nim_worker,
-                args=(GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, prompt, steps, cfg, seed),
+                args=(
+                    GALLERY_DIRECTORY,
+                    FLUX_KONTEXT_NIM_URL,
+                    prompt,
+                    steps,
+                    cfg,
+                    seed,
+                ),
                 daemon=True,
             )
             thread.start()
