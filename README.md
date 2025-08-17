@@ -2,32 +2,25 @@
 
 ![Flux Plug-in for Project G-Assist](img/flux_plugin_for_g_assist.png)
 
-The Flux Plugin for G-Assist is a plugin developed for NVIDIA’s Project G-Assist that brings real-time AI image generation directly to the desktop through natural language commands. It allows users to create high-quality images using the Flux family of models from Black Forest Labs, seamlessly integrated with the G-Assist interface. Users can simply type or speak prompts such as “a futuristic robot painter in a neon-lit workshop”, and the plugin handles the entire process—from submitting the prompt to generating and displaying the image—all without leaving the G-Assist chat window.
+The Flux Plugin for G-Assist is a plugin developed for NVIDIA's Project G-Assist that brings real-time AI image generation directly to the desktop through natural language commands. It allows users to create high-quality images using the Flux family of models from Black Forest Labs, seamlessly integrated with the G-Assist interface. Users can simply type or speak prompts such as "a futuristic robot painter in a neon-lit workshop", and the plugin handles the entire process—from submitting the prompt to generating and displaying the image—all without leaving the G-Assist chat window.
 
-The plugin supports multiple deployment backends for inference, including Flux NIMs running locally via WSL, on the cloud via build.nvidia.com, or through InvokeAI using the Flux Kontext model for image-to-image and screenshot-based transformations. The plugin includes additional tools for managing the inference service, such as checking status and turning the NIM service on or off, enabling a user-friendly experience for both beginners and power users.
+The plugin supports multiple inference backends, including Flux NIMs running locally via WSL, cloud-hosted NIMs on build.nvidia.com, InvokeAI and ComfyUI. This plugin supports both text to image generation and image-to-image generation using screenshots from the NVIDIA Gallery. The plugin includes additional tools for managing the inference services, such as checking status and turning the NIM service on or off, enabling a user-friendly experience for both beginners and power users.
 
-The goal of this plugin is to make generative image workflows faster, more accessible, and more fun—leveraging the strengths of NVIDIA’s hardware, AI models, and desktop ecosystem. By combining the power of FLUX with the voice-enabled G-Assist interface, the plugin turns any PC into a hands-free creative studio.
+The goal of this plugin is to make generative image workflows faster, more accessible, and more fun—leveraging the strengths of NVIDIA’s hardware, AI models, and desktop ecosystem. By combining the power of FLUX with the voice-enabled G-Assist chat interface, the plugin turns your RTX AI PC into a creative studio.
 
 ## What Can It Do?
 
 ### Image Generation
-- **Generate images from text prompts** using Flux AI model
-- **Support for multiple backends**: Local NIM servers, NVIDIA hosted services, or InvokeAI
+- **Generate images from text prompts** using the Flux.1-dev image model from Black Forst Labs
+- **Support for multiple backends**: Local NIM servers, NVIDIA hosted inference services, InvokeAI or ComfyUI
 - **Automatic desktop background setting** - generated images can be set as your wallpaper
-- **High-quality output** with customizable parameters (resolution, steps, CFG scale)
+- **High-quality output** with customizable parameters (aspect ratio, steps, CFG scale)
 
 ### NIM Server Management
-- **Start/stop local Flux NIM servers** using WSL and Podman
+- **Start/stop local Flux NIM servers**: G-Assist commands communicate with NIM servers using WSL and Podman
 - **Check NIM server status** to see if the service is running
-- **Health endpoint testing** for local servers
-- **Automatic configuration** using NGC API keys and Hugging Face tokens
-
-### InvokeAI Integration
-- **Upload screenshots to InvokeAI** for image-to-image workflows
-- **Flux Kontext generation** using uploaded images as reference
-- **Processor control** - pause and resume InvokeAI processing queues
-- **VRAM management** - empty model cache to free up memory
-- **Status monitoring** - check InvokeAI service health and version
+- **Health endpoint testing** to check if your NIMs are ready to perform inference
+- **Automatic configuration** using NGC API keys and Hugging Face tokens from plugin configuration
 
 ### Flux Kontext NIM Integration
 - **Direct API access** to Flux Kontext NIM servers for faster inference
@@ -35,31 +28,42 @@ The goal of this plugin is to make generative image workflows faster, more acces
 - **Seamless backend switching** - automatically chooses between NIM and InvokeAI based on configuration
 - **High-performance image-to-image generation** with minimal latency
 
+### InvokeAI and ComfyUI Integration
+- **Upload screenshots to local InvokeAI or ComfyUI server** for image-to-image workflows
+- **Flux Kontext generation** using uploaded images as reference
+- **Automatic queueing** 
+- **Processor control** - pause and resume InvokeAI processing queues
+- **VRAM management** - empty model cache to free up memory
+- **Status monitoring** - check InvokeAI and ComfyUI service health and version and system stats
+
 ### Smart Configuration
 - **Flexible URL configuration** - works with local servers or NVIDIA hosted endpoints
 - **Automatic API key validation** - ensures proper NVIDIA API key format
 - **Configurable output directories** for generated images
-- **Board management** for InvokeAI gallery organization
+- **Desktop wallpaper** settings optimized using fit or fill method based on image size
 
 ### Example Commands
 - "hey flux, generate an image of a cyberpunk city at night"
-- "hey flux, start the Flux dev NIM server"
-- "hey flux, use kontext to make it a cartoon style" (does image-to-image generation using latest screenshot taken with NVIDIA screenshot shortcut - automatically chooses between Flux Kontext NIM and InvokeAI backends)
+- "/flux generate an image of a cat piloting a spaceship, aspect ratio 1:1, 40 steps"
+- "/flux start the Flux dev NIM server"
+- "hey flux, stop the flux kontext nim server"
+- "hey flux, use kontext to make it a cartoon style" (does image-to-image generation with Flux Kontext using latest screenshot taken with NVIDIA screenshot shortcut)
+- "hey flux, what is the status of comfyui?"
 - "hey flux, empty the InvokeAI model cache to free up VRAM"
-- "hey flux, Check if the NIM server is running"
+- "hey flux, Check if the Flux Dev NIM server is running"
+- "/flux is the flux kontext nim running?"
 
 ## Before You Start
 Make sure you have:
-- Windows PC
+- Windows PC with Windows 11 (22H1 or later) with GeForce RTX GPU (supported hardware details: [https://docs.nvidia.com/nim/visual-genai/1.2.0/support-matrix.html#supported-hardware](https://docs.nvidia.com/nim/visual-genai/1.2.0/support-matrix.html#supported-hardware))
 - Python 3.12 or higher
-- G-Assist installed on your system
-- pywin32 >= 223
-- Pillow >= 10.0.0 (for image manipulation)
-- Basic knowledge of Python
+- NVIDIA App with Project G-Assist installed on your system
 
-💡 **Tip**: Use a virtual environment to keep your plugin dependencies isolated from other Python projects!
+## Installation Guide Quickstart
 
-## Installation Guide
+
+
+## Full Installation Guide for Developers
 
 ### Step 1: Get the Files
 Clone this repository
@@ -75,8 +79,6 @@ python -m venv .venv
 .venv\Scripts\activate
 python -m pip install -r requirements.txt
 ```
-
-**Note**: The requirements now include Pillow (PIL) for image manipulation capabilities used by the Flux Kontext NIM functionality.
 
 ### Step 3: Build the project
 
@@ -129,7 +131,7 @@ podman_cmd = [
     '--device', 'nvidia.com/gpu=all',
     '-e', f'NGC_API_KEY={NGC_API_KEY}',
     '-e', f'HF_TOKEN={HF_TOKEN}',
-    '-p', '8000:8000',
+    '-p', {port}:8000',
     '-v', f'{LOCAL_NIM_CACHE}:/opt/nim/.cache/',
     'nvcr.io/nim/black-forest-labs/flux.1-dev:1.0.0'
 ]
@@ -401,10 +403,67 @@ Your plugin automatically logs to `flux_plugin.log` in your user's profile direc
 - Error conditions
 - Function execution details
 
+## FAQ
+
+**Flux said that my image generation request is in progress, but I don't see my image**
+By default, generated images will be saved to the `OUTPUT_DIRECTORY` specified in your `config.json` file and that image will be set as your Desktop Wallpaper. Check both the Flux Plugin logs and the Flux NIM logs to see if there were any issues with your image generation request.
+
+In some cases, the Flux NIM may perform content filtering if your prompt contains certain terms or IPs. For example, Flux might not generate an image if your prompt contains the term "lego". In this case, the NIM will immediately return a black image with no other log or warning.
+
+**Do I need to specify a seed, number of steps or CFG scale when generating images?**
+These settings are optional and default values will be used if they are not specified. The plugin will try to help you fix errors if you have specified an invalid parameter value.
+
+**Do I have to pick between using the Flux dev and Flux Kontext model? Or can I use them together?**
+Depending on your system hardware and configuration, you should be able to run both the Flux.1-dev and Flux.1-Kontext-dev NIMs at the same time. 
+
+For example, you can start both the Flux dev and Flux Kontext NIM servers and generate an image using a simple prompt. The image will be saved to your Desktop. You can take a screenshot of your Desktop and then ask Flux to transform it using the Kontext model. 
+
+**I'm using a supported GPU, but the Flux NIM container fails to start or fails when generating images. Why is this?**
+Have a look at the logs of the NIM. You might need to adjust your `~/.wslconfig` settings in the `NVIDIA-Workbench` WSL distribution. For example:
+
+```ini
+[wsl]
+memory=50GB
+swap=14GB
+```
+
+**Can I specify the height and width of my image?**
+You may specify an aspect ratio when asking Flux to generate an image using the Flux dev model. The Flux dev NIM is optimized for specific image sizes, so you must specify a supported aspect ratio: 1:1, 16:9, 9:16, 5:4, 4:5, 3:2, 2:3.
+
+| Aspect Ratio | Image Dimensions | Style |
+|--------------|------------------|-------|
+| 1:1 | 1024x1024 | Square |
+| 16:9 | 1344x768 | Widescreen landscape |
+| 9:16 | 768x1344 | Portrait |
+| 5:4 | 1280x1024 | Traditional photo |
+| 4:5 | 1024x1280 | Portrait photo |
+| 3:2 | 1152x768 | Classic photo |
+| 2:3 | 768x1152 | Portrait classic |
+
+**Do I have to specify an aspect ratio when using the Flux Kontext model for image-to-image generation?**
+No, you do not have to specify an aspect ratio when using the Flux Kontext model. The plugin will take your most recent screenshot from the NVIDIA Gallery and then crop and resize it to the appropriate size for the Flux Kontext model.
+
+**Does the plugin support the Canny and Depth modes of the Flux dev NIM?**
+No, the plugin currently does not support these modes. However, the Flux Kontext model for image-to-image generation can perform tasks similar to the Canny and Depth modes of the Flux dev model.
+
+**I'm confused about the options for NIM, ComfyUI and InvokeAI, what are these different services for?**
+This plugin primarily supports the Flux.1-dev and Flux.1-Kontext-dev NIMs from NVIDIA. When using these services, the plugin makes requests directly to the NIM and returns the image data that is saved and displayed on your Desktop. 
+
+The ComfyUI and InvokeAI integrations are experimental and may require additional configuration and debugging. The NVIDIA NIMs do not have a way of natively queueing multiple requests. InvokeAI and ComfyUI are popular tools used in AI image generation with robust API support. These services can queue image generation tasks.
+
+The ComfyUI inference backend uses NIMnodes, which also take advantage of NVIDIA NIMs running on WSL. The InvokeAI inference backend does not use NVIDIA NIMs, instead it uses a quantized version of the Flux Kontext model provided by InvokeAI.
+
+**Can I specify the host and port to use for running the Flux dev or Flux Kontext NIMs?**
+Yes, you can provide the full URL to use for either NIM. The NIMs can also be hosted on other RTX AI PCs in your home network. For example, in `config.json` you could specify values like: 
+
+- `"FLUX_DEV_NIM_URL": "http://localhost:8002"`
+- `"FLUX_KONTEXT_NIM_URL": "http://192.168.1.123:8003"`
+
 ## Troubleshooting Tips
 - **Plugin not starting?** Check if Python 3.12+ is installed and in PATH
 - **Communication errors?** Verify pywin32 is installed correctly
 - **Commands not working?** Double-check your command registration
+- **Clear your G-Assist chat history** If you hav a long active chat history in G-Assist, try clearing the chat history if you are having issues with prompt understanding
 - **Missing logs?** Ensure write permissions in user profile directory
 
 ## Want to Contribute?

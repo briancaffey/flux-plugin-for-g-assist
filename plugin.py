@@ -49,20 +49,20 @@ CONFIG_FILE = os.path.join(
     "config.json",
 )
 GALLERY_DIRECTORY = None
+HF_TOKEN = None
 NVIDIA_API_KEY = None
 NGC_API_KEY = None
-HF_TOKEN = None
+FLUX_DEV_NIM_URL = None
+FLUX_KONTEXT_NIM_URL = "http://localhost:8011"
 LOCAL_NIM_CACHE = None
 OUTPUT_DIRECTORY = os.path.join(os.environ.get("USERPROFILE", "."), "flux_output")
+FLUX_KONTEXT_INFERENCE_BACKEND = "NIM"  # Default to NIM backend
+INVOKEAI_URL = "http://localhost:9090"
+INVOKEAI_BOARD_ID = None
+COMFYUI_URL = "http://localhost:8188"
 BUILD_NVIDIA_COM_FLUX_HOSTED_NIM = (
     "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
 )
-FLUX_DEV_NIM_URL = None
-INVOKEAI_URL = "http://localhost:9090"
-FLUX_KONTEXT_NIM_URL = "http://localhost:8011"
-COMFYUI_URL = "http://localhost:8188"
-FLUX_KONTEXT_INFERENCE_BACKEND = "NIM"  # Default to NIM backend
-INVOKEAI_BOARD_ID = None
 
 
 def set_desktop_background(image_path: str) -> bool:
@@ -88,8 +88,8 @@ def set_desktop_background(image_path: str) -> bool:
             with Image.open(image_path) as img:
                 width, height = img.size
 
-                # Use "fit" method for 1344x768 images, "fill" for all others
-                if width == 1344 and height == 768:
+                # Use "fit" method for 1344x768 or 1392x752 images, "fill" for all others
+                if width == 1344 and height == 768 or width == 1392 and height == 752:
                     position = "fit"
                     logging.info(f"1344x768 image detected, using 'fill' positioning")
                 else:
@@ -296,23 +296,23 @@ def load_config():
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
             GALLERY_DIRECTORY = config.get("GALLERY_DIRECTORY", None)
+            HF_TOKEN = config.get("HF_TOKEN", None)
             NVIDIA_API_KEY = config.get("NVIDIA_API_KEY", None)
             NGC_API_KEY = config.get("NGC_API_KEY", None)
-            HF_TOKEN = config.get("HF_TOKEN", None)
-            LOCAL_NIM_CACHE = config.get("LOCAL_NIM_CACHE", None)
-            OUTPUT_DIRECTORY = config.get("OUTPUT_DIRECTORY", OUTPUT_DIRECTORY)
             FLUX_DEV_NIM_URL = config.get(
                 "FLUX_DEV_NIM_URL", BUILD_NVIDIA_COM_FLUX_HOSTED_NIM
             )
-            INVOKEAI_URL = config.get("INVOKEAI_URL", "http://localhost:9090")
             FLUX_KONTEXT_NIM_URL = config.get(
                 "FLUX_KONTEXT_NIM_URL", "http://localhost:8011"
             )
-            COMFYUI_URL = config.get("COMFYUI_URL", "http://localhost:8188")
+            LOCAL_NIM_CACHE = config.get("LOCAL_NIM_CACHE", None)
+            OUTPUT_DIRECTORY = config.get("OUTPUT_DIRECTORY", OUTPUT_DIRECTORY)
             FLUX_KONTEXT_INFERENCE_BACKEND = config.get(
                 "FLUX_KONTEXT_INFERENCE_BACKEND", "NIM"
             )
+            INVOKEAI_URL = config.get("INVOKEAI_URL", "http://localhost:9090")
             INVOKEAI_BOARD_ID = config.get("INVOKEAI_BOARD_ID", None)
+            COMFYUI_URL = config.get("COMFYUI_URL", "http://localhost:8188")
             logging.info("Configuration loaded successfully")
     except FileNotFoundError:
         logging.warning(f"Config file not found: {CONFIG_FILE}")
@@ -346,22 +346,27 @@ def main():
 
     # Generate command handler mapping
     commands = {
+        # g-assist commands
         "initialize": execute_initialize_command,
         "shutdown": execute_shutdown_command,
+        # flux dev nim commands
         "check_flux_dev_nim_status": check_flux_dev_nim_status,
         "check_flux_dev_nim_ready": check_flux_dev_nim_ready,
         "stop_flux_dev_nim": stop_flux_dev_nim,
         "start_flux_dev_nim": start_flux_dev_nim,
         "generate_image": generate_image,
+        # flux kontext nim commands
         "generate_image_using_kontext": generate_image_using_kontext,
         "flux_kontext_nim_ready_check": flux_kontext_nim_ready_check,
         "check_flux_kontext_nim_status": check_flux_kontext_nim_status,
         "stop_flux_kontext_nim": stop_flux_kontext_nim,
         "start_flux_kontext_nim": start_flux_kontext_nim,
+        # invokeai commands
         "invokeai_status": invokeai_status,
         "pause_invokeai_processor": pause_invokeai_processor,
         "resume_invokeai_processor": resume_invokeai_processor,
         "invokeai_empty_model_cache": invokeai_empty_model_cache,
+        # comfyui commands
         "comfyui_status": comfyui_status,
         "comfyui_free_memory": comfyui_free_memory,
     }
@@ -1247,6 +1252,8 @@ def generate_image_worker(
     width: int = 1344,
     height: int = 768,
     steps: int = 30,
+    cfg: float = 5.0,
+    seed: int = 0,
 ):
     """Background worker function to generate image"""
     try:
@@ -1256,10 +1263,10 @@ def generate_image_worker(
         payload = {
             "height": height,
             "width": width,
-            "cfg_scale": 5,
+            "cfg_scale": cfg,
             "mode": "base",
             "samples": 1,
-            "seed": 0,  # random seed
+            "seed": seed,  # random seed
             "steps": steps,
             "prompt": prompt,
         }
@@ -1388,6 +1395,28 @@ def generate_image(
         except (ValueError, TypeError):
             return generate_failure_response("Steps parameter must be an integer")
 
+        # Get cfg parameter and validate
+        cfg = params.get("cfg", 5.0) if params else 5.0
+        try:
+            cfg = float(cfg)
+            if cfg <= 1.0 or cfg > 9.0:
+                return generate_failure_response(
+                    "CFG parameter must be greater than 1 and less than or equal to 9"
+                )
+        except (ValueError, TypeError):
+            return generate_failure_response("CFG parameter must be a number")
+
+        # Get seed parameter and validate
+        seed = params.get("seed", 0) if params else 0
+        try:
+            seed = int(seed)
+            if seed < 0 or seed > 4294967296:
+                return generate_failure_response(
+                    "Seed parameter must be between 0 and 4294967296 (exclusive)"
+                )
+        except (ValueError, TypeError):
+            return generate_failure_response("Seed parameter must be an integer")
+
         # Get aspect_ratio parameter and validate
         aspect_ratio = params.get("aspect_ratio", "16:9") if params else "16:9"
         valid_aspect_ratios = ["1:1", "16:9", "9:16", "5:4", "4:5", "3:2", "2:3"]
@@ -1424,6 +1453,8 @@ def generate_image(
                 width,
                 height,
                 steps,
+                cfg,
+                seed,
             ),
             daemon=True,
         )
@@ -1431,10 +1462,10 @@ def generate_image(
 
         logging.info(f"Started background image generation thread for prompt: {prompt}")
         logging.info(
-            f"Using aspect ratio: {aspect_ratio}, dimensions: {width}x{height}, steps: {steps}"
+            f"Using aspect ratio: {aspect_ratio}, dimensions: {width}x{height}, steps: {steps}, cfg: {cfg}, seed: {seed}"
         )
         return generate_success_response(
-            f'Your image generation request is in progress! Prompt: "{prompt}", Aspect Ratio: {aspect_ratio}, Steps: {steps}'
+            f'Your image generation request is in progress! Prompt: "{prompt}", Aspect Ratio: {aspect_ratio}, Steps: {steps}, CFG: {cfg}, Seed: {seed}'
         )
 
     except Exception as e:
