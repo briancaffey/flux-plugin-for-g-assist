@@ -28,7 +28,7 @@
       "properties": {}
     },
     {
-      "name": "stop_nim",
+      "name": "stop_flux_dev_nim",
       "description": "Stop the flux dev NIM server",
       "tags": [
         "nim",

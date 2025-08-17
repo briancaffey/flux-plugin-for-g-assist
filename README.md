@@ -43,7 +43,7 @@ The goal of this plugin is to make generative image workflows faster, more acces
 
 ### Example Commands
 - "hey flux, generate an image of a cyberpunk city at night"
-- "hey flux, start the Flux NIM server"
+- "hey flux, start the Flux dev NIM server"
 - "hey flux, use kontext to make it a cartoon style" (does image-to-image generation using latest screenshot taken with NVIDIA screenshot shortcut - automatically chooses between Flux Kontext NIM and InvokeAI backends)
 - "hey flux, empty the InvokeAI model cache to free up VRAM"
 - "hey flux, Check if the NIM server is running"
@@ -118,9 +118,9 @@ For faster Flux Kontext inference, you can set up a dedicated Flux Kontext NIM s
 
 **Note**: The Flux Kontext NIM is currently in development and may not be publicly available yet. When it becomes available, you'll be able to run it locally or access it through NVIDIA's hosted services.
 
-### Step 8: Start the NVIDIA NIM
+### Step 8: Start the Flux dev NIM
 
-Ask flux if this NIM is running. If it is not running, ask flux to start the NIM. This will run a command to star the NIM container in WSL using podman: 
+Ask flux if the Flux dev NIM is running. If it is not running, ask flux to start the Flux dev NIM. This will run a command to star the Flux dev NIM container in WSL using podman: 
 
 ```python
 podman_cmd = [
@@ -135,7 +135,7 @@ podman_cmd = [
 ]
 ```
 
-Then ask if the NIM is ready. This will check the `/v1/health/live` and `/v1/health/ready` endpoints of the Flux NIM.
+Then ask if the NIM is ready. This will check the `/v1/health/live` and `/v1/health/ready` endpoints of the Flux dev NIM.
 
 ### Step 9: Generete AI images using the Flux Plug-in in the G-Assist chat window
 
@@ -377,9 +377,9 @@ The Flux Plug-in for G-Assist supports the following commands:
 
 | Function | Description | Example |
 |----------|-------------|---------|
-| `flux_nim_ready_check` | Tests health endpoints of the Flux NIM server | "hey flux, check if the flux nim server is ready" |
-| `check_nim_status` | Checks if the Flux NIM server is running | "hey flux, check if the nim server is running" |
-| `stop_nim` | Stops the Flux NIM server | "hey flux, stop the flux nim server" |
+| `check_flux_dev_nim_ready` | Tests health and ready endpoints of the Flux NIM server | "hey flux, check if the flux nim server is ready" |
+| `check_flux_dev_nim_status` | Checks if the Flux dev NIM server container is running | "hey flux, check if the nim server is running" |
+| `stop_flux_dev_nim` | Stops the Flux dev NIM server | "hey flux, stop the flux nim server" |
 | `start_flux_dev_nim` | Starts the Flux Dev NIM server | "hey flux, start the flux dev nim server" |
 | `generate_image` | Generates an image from text prompt using Flux | "hey flux, generate an image of a cyberpunk city" |
 | `generate_image_using_kontext` | Performs image-to-image generation using Flux Kontext | "hey flux, use kontext to make it a cartoon style" |
@@ -388,7 +388,7 @@ The Flux Plug-in for G-Assist supports the following commands:
 | `resume_invokeai_processor` | Resumes the InvokeAI processing queue | "hey flux, resume the invokeai processor" |
 | `invokeai_empty_model_cache` | Empties the InvokeAI model cache to free VRAM | "hey flux, empty the invokeai model cache" |
 | `flux_kontext_nim_ready_check` | Tests health endpoints of the Flux Kontext NIM server | "hey flux, check if the flux kontext nim server is ready" |
-| `check_flux_kontext_nim_status` | Checks if the Flux Kontext NIM server is running | "hey flux, check if the flux kontext nim server is running" |
+| `check_flux_kontext_nim_status` | Checks if the Flux Kontext NIM server container is running | "hey flux, check if the flux kontext nim server is running" |
 | `stop_flux_kontext_nim` | Stops the Flux Kontext NIM server | "hey flux, stop the flux kontext nim server" |
 | `start_flux_kontext_nim` | Starts the Flux Kontext NIM server | "hey flux, start the flux kontext nim server" |
 | `comfyui_status` | Checks the status of the ComfyUI service | "hey flux, check comfyui status" |

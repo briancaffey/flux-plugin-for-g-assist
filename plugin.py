@@ -286,7 +286,7 @@ def main():
         "shutdown": execute_shutdown_command,
 
         "check_flux_dev_nim_status": check_flux_dev_nim_status,
-        "flux_nim_ready_check": flux_nim_ready_check,
+        "check_flux_dev_nim_ready": check_flux_dev_nim_ready,
         "stop_flux_dev_nim": stop_flux_dev_nim,
         "start_flux_dev_nim": start_flux_dev_nim,
 
@@ -537,10 +537,10 @@ def execute_shutdown_command() -> dict:
     return generate_success_response("shutdown success.")
 
 
-def flux_nim_ready_check(
+def check_flux_dev_nim_ready(
     params: dict = None, context: dict = None, system_info: dict = None
 ) -> dict:
-    """Command handler for `flux_nim_ready_check` function
+    """Command handler for `check_flux_dev_nim_ready` function
 
     Tests health endpoints using the configured FLUX_NIM_URL.
 
@@ -552,7 +552,7 @@ def flux_nim_ready_check(
     Returns:
         The function return value(s)
     """
-    logging.info(f"Executing flux_nim_ready_check with params: {params}")
+    logging.info(f"Executing check_flux_dev_nim_ready with params: {params}")
 
     try:
         # Reload configuration to ensure we have the latest values
@@ -618,8 +618,8 @@ def flux_nim_ready_check(
         return final_response
 
     except Exception as e:
-        logging.error(f"Error in flux_nim_ready_check: {str(e)}")
-        return generate_failure_response(f"Error in flux_nim_ready_check: {str(e)}")
+        logging.error(f"Error in check_flux_dev_nim_ready: {str(e)}")
+        return generate_failure_response(f"Error in check_flux_dev_nim_ready: {str(e)}")
 
 
 def check_flux_dev_nim_status(
@@ -627,7 +627,7 @@ def check_flux_dev_nim_status(
 ) -> dict:
     """Command handler for `check_flux_dev_nim_status` function
 
-    Checks the status of the flux NIM server using WSL and podman.
+    Checks the status of the Flux dev NIM server using WSL and podman.
 
     Args:
         params: Function parameters
@@ -663,7 +663,7 @@ def check_flux_dev_nim_status(
 
             if container_names:
                 return generate_success_response(
-                    f"Flux DevNIM server is running. Container: {container_names}"
+                    f"Flux Dev NIM server is running. Container: {container_names}"
                 )
             else:
                 return generate_failure_response("Flux Dev NIM server is not running.")
@@ -688,7 +688,7 @@ def stop_flux_dev_nim(
 ) -> dict:
     """Command handler for `stop_flux_dev_nim` function
 
-    Stops the flux NIM server using WSL and podman.
+    Stops the Flux dev NIM server using WSL and podman.
 
     Args:
         params: Function parameters
@@ -733,7 +733,7 @@ def start_flux_dev_nim(
 ) -> dict:
     """Command handler for `start_flux_dev_nim` function
 
-    Starts the flux NIM server using WSL and podman with configuration from config.json.
+    Starts the Flux dev NIM server using WSL and podman with configuration from config.json.
 
     Args:
         params: Function parameters
@@ -767,16 +767,16 @@ def start_flux_dev_nim(
             )
 
         # Check if NIM server is already running
-        logging.info("Checking if Flux NIM server is already running...")
+        logging.info("Checking if Flux dev NIM server is already running...")
         check_result = check_flux_dev_nim_status()
         if check_result.get("success", False):
-            return generate_failure_response("Flux NIM server is already running.")
+            return generate_failure_response("Flux dev NIM server is already running.")
 
         # Get port from FLUX_NIM_URL
         port = FLUX_NIM_URL.split(":")[-1]
 
         # Build the podman command
-        logging.info("Starting Flux NIM server...")
+        logging.info("Starting Flux dev NIM server...")
         podman_cmd = [
             "wsl",
             "-d",
@@ -1238,7 +1238,7 @@ def generate_image(
 ) -> dict:
     """Command handler for `generate_image` function
 
-    Generates an image using the Flux NIM API in a background thread.
+    Generates an image using the Flux dev NIM API in a background thread.
 
     Args:
         params: Function parameters (can include 'prompt')
@@ -1390,7 +1390,7 @@ def upload_image_to_invoke(image_path: str, invokeai_url: str, invokeai_board_id
         return None
 
 
-# This dictionary defines the workflow that will be sent to InvokeAI for doing Flux Kontext generation
+# This dictionary defines the workflow that will be sent to InvokeAI for doing Flux Kontext generation with the INVOKEAI backend    
 INVOKEAI_FLUX_KONTEXT_WORKFLOW = {
     "queue_id": "default",
     "enqueued": 0,
