@@ -172,11 +172,19 @@
       "properties": {
         "prompt": {
           "type": "string",
-          "description": "Text prompt for Flux Kontext generation (optional)"
+          "description": "Text prompt for Flux Kontext generation (required)"
         },
         "steps": {
           "type": "integer",
           "description": "Number of inference steps for image generation (optional, defaults to 30, range 20-50)"
+        },
+        "cfg": {
+          "type": "number",
+          "description": "CFG scale for image generation (optional, defaults to 5.0, range greater than 1.0 to 9.0)"
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Random seed for image generation (optional, defaults to 0, range 0 to 4294967296)"
         }
       }
     },

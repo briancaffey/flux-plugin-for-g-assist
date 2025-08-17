@@ -1465,7 +1465,7 @@ def generate_image(
             f"Using aspect ratio: {aspect_ratio}, dimensions: {width}x{height}, steps: {steps}, cfg: {cfg}, seed: {seed}"
         )
         return generate_success_response(
-            f'Your image generation request is in progress! Prompt: "{prompt}", Aspect Ratio: {aspect_ratio}, Steps: {steps}, CFG: {cfg}, Seed: {seed}'
+            f'Your image generation request is in progress!\nPrompt: "{prompt}"\nSettings: Aspect Ratio: {aspect_ratio}, Steps: {steps}, CFG: {cfg}, Seed: {seed}'
         )
 
     except Exception as e:
@@ -2031,6 +2031,8 @@ def generate_image_using_kontext_nim_worker(
     flux_kontext_nim_url: str,
     prompt: str = None,
     steps: int = 30,
+    cfg: float = 5.0,
+    seed: int = 0,
 ):
     """Background worker function to process screenshot with Flux Kontext NIM"""
     try:
@@ -2084,10 +2086,10 @@ def generate_image_using_kontext_nim_worker(
         payload = {
             "prompt": prompt,
             "image": base64_image,
-            "cfg_scale": 3.5,
+            "cfg_scale": cfg,
             "aspect_ratio": "match_input_image",
             "samples": 1,
-            "seed": 0,  # random seed
+            "seed": seed,
             "steps": steps,  # use the steps parameter
         }
 
@@ -2185,7 +2187,7 @@ def generate_image_using_kontext(
     Chooses between Flux Kontext NIM and InvokeAI backends based on configuration.
 
     Args:
-        params: Function parameters (can include 'prompt' and 'steps')
+        params: Function parameters (must include 'prompt', can include 'steps', 'cfg', 'seed')
         context: Context information
         system_info: System information
 
@@ -2205,8 +2207,11 @@ def generate_image_using_kontext(
                 "GALLERY_DIRECTORY not configured. Please set GALLERY_DIRECTORY in config.json"
             )
 
-        # Get parameters from params (optional)
-        prompt = params.get("prompt", "") if params else ""
+        # Get parameters from params
+        prompt = params.get("prompt") if params else None
+        if not prompt:
+            return generate_failure_response("Prompt parameter is required. Please provide a prompt for image generation.")
+        
         steps = params.get("steps", 30) if params else 30  # Default to 30 steps
 
         # Validate steps parameter
@@ -2218,6 +2223,28 @@ def generate_image_using_kontext(
                 )
         except (ValueError, TypeError):
             return generate_failure_response("Steps parameter must be an integer")
+
+        # Get cfg parameter and validate
+        cfg = params.get("cfg", 5.0) if params else 5.0
+        try:
+            cfg = float(cfg)
+            if cfg <= 1.0 or cfg > 9.0:
+                return generate_failure_response(
+                    "CFG parameter must be greater than 1 and less than or equal to 9"
+                )
+        except (ValueError, TypeError):
+            return generate_failure_response("CFG parameter must be a number")
+
+        # Get seed parameter and validate
+        seed = params.get("seed", 0) if params else 0
+        try:
+            seed = int(seed)
+            if seed < 0 or seed > 4294967296:
+                return generate_failure_response(
+                    "Seed parameter must be between 0 and 4294967296 (exclusive)"
+                )
+        except (ValueError, TypeError):
+            return generate_failure_response("Seed parameter must be an integer")
 
         # Determine which backend to use based on FLUX_KONTEXT_INFERENCE_BACKEND configuration
         backend = FLUX_KONTEXT_INFERENCE_BACKEND.upper()
@@ -2235,25 +2262,17 @@ def generate_image_using_kontext(
             # Start Flux Kontext NIM generation in background thread
             thread = threading.Thread(
                 target=generate_image_using_kontext_nim_worker,
-                args=(GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, prompt, steps),
+                args=(GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, prompt, steps, cfg, seed),
                 daemon=True,
             )
             thread.start()
 
-            if prompt:
-                logging.info(
-                    f"Started background Flux Kontext NIM generation thread with prompt: {prompt}"
-                )
-                return generate_success_response(
-                    f'Your Flux Kontext NIM generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY} with prompt: "{prompt}"'
-                )
-            else:
-                logging.info(
-                    f"Started background Flux Kontext NIM generation thread with default prompt"
-                )
-                return generate_success_response(
-                    f"Your Flux Kontext NIM generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}"
-                )
+            logging.info(
+                f"Started background Flux Kontext NIM generation thread with prompt: {prompt}"
+            )
+            return generate_success_response(
+                f'Your Flux Kontext NIM generation request is in progress!\nUsing screenshot from: {GALLERY_DIRECTORY}\nPrompt: "{prompt}"\nSteps: {steps}, CFG: {cfg}, Seed: {seed}'
+            )
 
         elif backend == "INVOKEAI":
             if not INVOKEAI_URL:
@@ -2278,20 +2297,12 @@ def generate_image_using_kontext(
             )
             thread.start()
 
-            if prompt:
-                logging.info(
-                    f"Started background InvokeAI Flux Kontext generation thread with prompt: {prompt}"
-                )
-                return generate_success_response(
-                    f'Your InvokeAI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY} with prompt: "{prompt}"'
-                )
-            else:
-                logging.info(
-                    f"Started background InvokeAI Flux Kontext generation thread with default prompt"
-                )
-                return generate_success_response(
-                    f"Your InvokeAI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}"
-                )
+            logging.info(
+                f"Started background InvokeAI Flux Kontext generation thread with prompt: {prompt}"
+            )
+            return generate_success_response(
+                f'Your InvokeAI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY} with prompt: "{prompt}"\nSteps: {steps}'
+            )
 
         elif backend == "COMFYUI":
             if not COMFYUI_URL:
@@ -2310,20 +2321,12 @@ def generate_image_using_kontext(
             )
             thread.start()
 
-            if prompt:
-                logging.info(
-                    f"Started background ComfyUI Flux Kontext generation thread with prompt: {prompt}"
-                )
-                return generate_success_response(
-                    f'Your ComfyUI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY} with prompt: "{prompt}"'
-                )
-            else:
-                logging.info(
-                    f"Started background ComfyUI Flux Kontext generation thread with default prompt"
-                )
-                return generate_success_response(
-                    f"Your ComfyUI Flux Kontext generation request is in progress! Using screenshot from: {GALLERY_DIRECTORY}"
-                )
+            logging.info(
+                f"Started background ComfyUI Flux Kontext generation thread with prompt: {prompt}"
+            )
+            return generate_success_response(
+                f'Your ComfyUI Flux Kontext generation request is in progress!\nUsing screenshot from: {GALLERY_DIRECTORY}\nPrompt: "{prompt}"\nSteps: {steps}'
+            )
 
         else:
             # Invalid backend configuration
