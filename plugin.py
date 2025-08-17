@@ -61,7 +61,7 @@ INVOKEAI_URL = "http://localhost:9090"
 FLUX_KONTEXT_NIM_URL = "http://localhost:8011"
 COMFYUI_URL = "http://localhost:8188"
 FLUX_KONTEXT_INFERENCE_BACKEND = "NIM"  # Default to NIM backend
-BOARD_ID = None
+INVOKEAI_BOARD_ID = None
 
 
 def set_desktop_background(image_path: str) -> bool:
@@ -229,7 +229,7 @@ def prepare_image_for_comfyui(
 
 def load_config():
     """Load configuration from config.json file"""
-    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_NIM_URL, INVOKEAI_URL, FLUX_KONTEXT_NIM_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, BOARD_ID
+    global GALLERY_DIRECTORY, NVIDIA_API_KEY, NGC_API_KEY, HF_TOKEN, LOCAL_NIM_CACHE, OUTPUT_DIRECTORY, FLUX_NIM_URL, INVOKEAI_URL, FLUX_KONTEXT_NIM_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, INVOKEAI_BOARD_ID
     try:
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
@@ -248,7 +248,7 @@ def load_config():
             FLUX_KONTEXT_INFERENCE_BACKEND = config.get(
                 "FLUX_KONTEXT_INFERENCE_BACKEND", "NIM"
             )
-            BOARD_ID = config.get("BOARD_ID", None)
+            INVOKEAI_BOARD_ID = config.get("INVOKEAI_BOARD_ID", None)
             logging.info("Configuration loaded successfully")
     except FileNotFoundError:
         logging.warning(f"Config file not found: {CONFIG_FILE}")
@@ -284,20 +284,25 @@ def main():
     commands = {
         "initialize": execute_initialize_command,
         "shutdown": execute_shutdown_command,
-        "flux_nim_ready_check": flux_nim_ready_check,
+
         "check_flux_dev_nim_status": check_flux_dev_nim_status,
+        "flux_nim_ready_check": flux_nim_ready_check,
         "stop_flux_dev_nim": stop_flux_dev_nim,
         "start_flux_dev_nim": start_flux_dev_nim,
+
         "generate_image": generate_image,
         "generate_image_using_kontext": generate_image_using_kontext,
-        "invokeai_status": invokeai_status,
-        "pause_invokeai_processor": pause_invokeai_processor,
-        "resume_invokeai_processor": resume_invokeai_processor,
-        "invokeai_empty_model_cache": invokeai_empty_model_cache,
+
         "flux_kontext_nim_ready_check": flux_kontext_nim_ready_check,
         "check_flux_kontext_nim_status": check_flux_kontext_nim_status,
         "stop_flux_kontext_nim": stop_flux_kontext_nim,
         "start_flux_kontext_nim": start_flux_kontext_nim,
+
+        "invokeai_status": invokeai_status,
+        "pause_invokeai_processor": pause_invokeai_processor,
+        "resume_invokeai_processor": resume_invokeai_processor,
+        "invokeai_empty_model_cache": invokeai_empty_model_cache,
+
         "comfyui_status": comfyui_status,
         "comfyui_free_memory": comfyui_free_memory,
     }
@@ -453,22 +458,6 @@ def generate_success_response(message: str = None) -> Response:
     response = {"success": True}
     if message:
         response["message"] = message
-    return response
-
-
-def generate_progress_response(
-    message: str = None, status: str = "processing"
-) -> Response:
-    """Generates a progress response for partial updates.
-
-    Parameters:
-        message: Progress message to display
-        status: Status indicator (processing, success, error)
-
-    Returns:
-        A progress response with the attached message and status
-    """
-    response = {"success": True, "message": message, "status": status}
     return response
 
 
@@ -1348,14 +1337,14 @@ def find_most_recent_image(directory: str, extensions: set[str]):
     return latest_file
 
 
-def upload_image_to_invoke(image_path: str, invokeai_url: str, board_id: str = None):
+def upload_image_to_invoke(image_path: str, invokeai_url: str, invokeai_board_id: str = None):
     """
     Uploads an image to InvokeAI and returns the image name.
 
     Args:
         image_path (str): Path to the image file
         invokeai_url (str): Base URL for InvokeAI
-        board_id (str): ID of the board to upload to (optional)
+        invokeai_board_id (str): ID of the board to upload to (optional)
 
     Returns:
         str: The image name returned by InvokeAI, or None if upload failed
@@ -1367,9 +1356,9 @@ def upload_image_to_invoke(image_path: str, invokeai_url: str, board_id: str = N
         "crop_visible": "false",
     }
 
-    # Add board_id to params if provided
-    if board_id:
-        params["board_id"] = board_id
+    # Add invokeai_board_id to params if provided
+    if invokeai_board_id:
+        params["invokeai_board_id"] = invokeai_board_id
 
     try:
         # Get the MIME type of the image
@@ -1799,9 +1788,9 @@ def submit_workflow_to_invokeai(workflow_data, invokeai_url):
 def generate_image_using_kontext_worker(
     GALLERY_DIRECTORY: str,
     invokeai_url: str,
-    board_id: str = None,
+    invokeai_board_id: str = None,
     prompt: str = None,
-    steps: int = 30,
+    steps: int = 30, # TODO: use this config value
 ):
     """Background worker function to upload screenshot and process with InvokeAI"""
     try:
@@ -1834,7 +1823,7 @@ def generate_image_using_kontext_worker(
 
         # Step 1: Upload the image using the requests library
         image_name = upload_image_to_invoke(
-            latest_screenshot_path, invokeai_url, board_id
+            latest_screenshot_path, invokeai_url, invokeai_board_id
         )
 
         if not image_name:
@@ -2037,7 +2026,7 @@ def generate_image_using_kontext(
         load_config()
 
         # Check if GALLERY_DIRECTORY is configured
-        global GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, INVOKEAI_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, BOARD_ID
+        global GALLERY_DIRECTORY, FLUX_KONTEXT_NIM_URL, INVOKEAI_URL, COMFYUI_URL, FLUX_KONTEXT_INFERENCE_BACKEND, INVOKEAI_BOARD_ID
         if not GALLERY_DIRECTORY:
             return generate_failure_response(
                 "GALLERY_DIRECTORY not configured. Please set GALLERY_DIRECTORY in config.json"
@@ -2105,7 +2094,7 @@ def generate_image_using_kontext(
             # Start InvokeAI generation in background thread
             thread = threading.Thread(
                 target=generate_image_using_kontext_worker,
-                args=(GALLERY_DIRECTORY, INVOKEAI_URL, BOARD_ID, prompt, steps),
+                args=(GALLERY_DIRECTORY, INVOKEAI_URL, INVOKEAI_BOARD_ID, prompt, steps),
                 daemon=True,
             )
             thread.start()
@@ -2466,7 +2455,7 @@ COMFYUI_FLUX_KONTEXT_WORKFLOW = {
         "inputs": {
             "width": ["22", 0],
             "height": ["22", 1],
-            "prompt": "make into into fine Chinese porcelain blue and white",
+            "prompt": "", # replace with actual prompt
             "cfg_scale": 2.5,
             "seed": 738487792,
             "steps": 20,

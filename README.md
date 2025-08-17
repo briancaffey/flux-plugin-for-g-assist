@@ -180,17 +180,17 @@ The Flux plugin uses a `config.json` file to manage all settings. Copy `config.e
 | Option | Example Values | Required |
 |--------|----------------|----------|
 | `GALLERY_DIRECTORY` | `"D:\\Screenshots"`, `"C:\\NVIDIA"` | No |
-| `NVIDIA_API_KEY` | `"nvapi-your-key-here"` | No* |
-| `FLUX_NIM_URL` | `"http://localhost:8000"`, `"http://192.168.1.100:8000"` | Yes |
-| `NGC_API_KEY` | `"your-ngc-key"` | Yes** |
 | `HF_TOKEN` | `"hf_your-token"` | Yes** |
-| `LOCAL_NIM_CACHE` | `~/.cache/nim` | Yes** |
-| `INVOKEAI_URL` | `"http://localhost:9090"`, `"http://192.168.1.100:9090"` | No |
+| `NVIDIA_API_KEY` | `"nvapi-your-key-here"` | No* |
+| `NGC_API_KEY` | `"your-ngc-key"` | Yes** |
+| `FLUX_DEV_NIM_URL` | `"http://localhost:8000"`, `"http://192.168.1.100:8000"` | Yes |
 | `FLUX_KONTEXT_NIM_URL` | `"http://localhost:8011"`, `"http://192.168.1.100:8011"` | No |
-| `COMFYUI_URL` | `"http://localhost:8188"`, `"http://192.168.1.100:8188"` | No |
-| `FLUX_KONTEXT_INFERENCE_BACKEND` | `"NIM"`, `"INVOKEAI"`, `"COMFYUI"` | No |
-| `BOARD_ID` | `"my-gallery-board"`, `"flux-gallery"` | No |
+| `LOCAL_NIM_CACHE` | `~/.cache/nim` | Yes** |
 | `OUTPUT_DIRECTORY` | `"C:\\GeneratedImages"`, `"D:\\flux-output"` | No |
+| `FLUX_KONTEXT_INFERENCE_BACKEND` | `"NIM"`, `"INVOKEAI"`, `"COMFYUI"` | No |
+| `INVOKEAI_URL` | `"http://localhost:9090"`, `"http://192.168.1.100:9090"` | No |
+| `INVOKEAI_BOARD_ID` | `"my-gallery-board"`, `"flux-gallery"` | No |
+| `COMFYUI_URL` | `"http://localhost:8188"`, `"http://192.168.1.100:8188"` | No |
 
 *Required only when using NVIDIA hosted Flux service (`FLUX_NIM_URL` starts with "https://ai.api.nvidia.com", e.g. https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev)
 **Required only when using local NIM server

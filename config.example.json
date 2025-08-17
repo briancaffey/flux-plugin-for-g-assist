@@ -1,14 +1,14 @@
 {
     "GALLERY_DIRECTORY": "D:\\NVIDIA",
-    "NVIDIA_API_KEY": "nvapi-abc123",
-    "FLUX_NIM_URL": "http://localhost:8000",
-    "NGC_API_KEY": "abc123",
     "HF_TOKEN": "hf_abc123",
+    "NVIDIA_API_KEY": "nvapi-abc123",
+    "NGC_API_KEY": "abc123",
+    "FLUX_DEV_NIM_URL": "http://localhost:8000",
+    "FLUX_KONTEXT_NIM_URL": "http://localhost:8011",
     "LOCAL_NIM_CACHE": "~/.cache/nim",
     "OUTPUT_DIRECTORY": "D:\\flux_output",
-    "INVOKEAI_URL": "http://localhost:9090",
-    "FLUX_KONTEXT_NIM_URL": "http://localhost:8011",
-    "COMFYUI_URL": "http://localhost:8188",
     "FLUX_KONTEXT_INFERENCE_BACKEND": "NIM",
-    "BOARD_ID": "optional-board-id"
+    "INVOKEAI_URL": "http://localhost:9090",
+    "INVOKEAI_BOARD_ID": "optional-board-id",
+    "COMFYUI_URL": "http://localhost:8188"
 }
