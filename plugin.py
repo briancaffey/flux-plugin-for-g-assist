@@ -651,8 +651,8 @@ def check_nim_status(
     logging.info(f"Executing check_nim_status with params: {params}")
 
     try:
-        # Check if nim-server container is running using WSL and podman
-        logging.info("Checking if nim-server container is running...")
+        # Check if FLUX_DEV container is running using WSL and podman
+        logging.info("Checking if FLUX_DEV container is running...")
         check_cmd = [
             "wsl",
             "-d",
@@ -660,7 +660,7 @@ def check_nim_status(
             "podman",
             "ps",
             "--filter",
-            "name=nim-server",
+            "name=FLUX_DEV",
             "--format",
             "{{.Names}}",
         ]
@@ -670,7 +670,7 @@ def check_nim_status(
                 check_cmd, check=True, capture_output=True, text=True
             )
             container_names = result.stdout.strip()
-            logging.info(f"Nim-server container names: {container_names}")
+            logging.info(f"NIM container names: {container_names}")
 
             if container_names:
                 return generate_success_response(
@@ -712,15 +712,15 @@ def stop_nim(
     logging.info(f"Executing stop_nim with params: {params}")
 
     try:
-        # Stop the nim-server container using WSL and podman
-        logging.info("Stopping nim-server container...")
-        stop_cmd = ["wsl", "-d", "NVIDIA-Workbench", "podman", "kill", "nim-server"]
+        # Stop the FLUX_DEV container using WSL and podman
+        logging.info("Stopping FLUX_DEV container...")
+        stop_cmd = ["wsl", "-d", "NVIDIA-Workbench", "podman", "kill", "FLUX_DEV"]
 
         try:
             result = subprocess.run(
                 stop_cmd, check=True, capture_output=True, text=True
             )
-            logging.info(f"Nim-server stop result: {result.stdout.strip()}")
+            logging.info(f"FLUX_DEV stop result: {result.stdout.strip()}")
 
             return generate_success_response("NIM server stopped successfully.")
 
@@ -796,7 +796,7 @@ def start_nim(
             "run",
             "-d",
             "--rm",
-            "--name=nim-server",
+            "--name=FLUX_DEV",
             "--device",
             "nvidia.com/gpu=all",
             "-e",

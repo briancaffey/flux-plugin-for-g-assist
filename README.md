@@ -125,7 +125,7 @@ Ask flux if this NIM is running. If it is not running, ask flux to start the NIM
 ```python
 podman_cmd = [
     'wsl', '-d', 'NVIDIA-Workbench',
-    'podman', 'run', '-d', '--rm', '--name=nim-server',
+    'podman', 'run', '-d', '--rm', '--name=FLUX_DEV',
     '--device', 'nvidia.com/gpu=all',
     '-e', f'NGC_API_KEY={NGC_API_KEY}',
     '-e', f'HF_TOKEN={HF_TOKEN}',
@@ -192,7 +192,7 @@ The Flux plugin uses a `config.json` file to manage all settings. Copy `config.e
 | `BOARD_ID` | `"my-gallery-board"`, `"flux-gallery"` | No |
 | `OUTPUT_DIRECTORY` | `"C:\\GeneratedImages"`, `"D:\\flux-output"` | No |
 
-*Required only when using NVIDIA hosted Flux service (`FLUX_NIM_URL` starts with "https://ai.api.nvidia.com")
+*Required only when using NVIDIA hosted Flux service (`FLUX_NIM_URL` starts with "https://ai.api.nvidia.com", e.g. https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev)
 **Required only when using local NIM server
 
 ## Using the Flux.1-dev NVIDIA NIM for text-to-image generation
